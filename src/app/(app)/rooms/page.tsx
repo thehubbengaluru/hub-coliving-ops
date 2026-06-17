@@ -205,7 +205,14 @@ function BedModal({
       const res = await fetch("/api/rooms/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notionPageId, property: room.property, checkOutDate: coDate }),
+        body: JSON.stringify({
+          notionPageId,
+          property:    room.property,
+          checkOutDate: coDate,
+          roomNumber:  room.number,
+          bedLabel:    bed.bedNumber === 1 ? "A" : bed.bedNumber === 2 ? "B" : null,
+          roomType:    room.type,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Checkout failed")

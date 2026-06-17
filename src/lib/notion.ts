@@ -40,6 +40,24 @@ function getDate(page: PageObjectResponse, prop: string): string | null {
   return null
 }
 
+function getRichText(page: PageObjectResponse, prop: string): string | null {
+  const p = page.properties[prop]
+  if (p?.type === "rich_text") return p.rich_text.map(t => t.plain_text).join("").trim() || null
+  return null
+}
+
+function getEmail(page: PageObjectResponse, prop: string): string | null {
+  const p = page.properties[prop]
+  if (p?.type === "email") return p.email ?? null
+  return null
+}
+
+function getPhone(page: PageObjectResponse, prop: string): string | null {
+  const p = page.properties[prop]
+  if (p?.type === "phone_number") return p.phone_number ?? null
+  return null
+}
+
 // ─── Room number parsing ───────────────────────────────────────────────────
 // Handles: "301A", "301 A", "302AB", "105B", "304"
 
@@ -302,6 +320,87 @@ export async function checkInGuest({
     props["Status"]          = { select: { name: "Occupied" } }
   }
   await notion.pages.update({ page_id: notionPageId, properties: props })
+}
+
+// ─── Alumni sync ──────────────────────────────────────────────────────────
+
+const DB_ALUMNI = "2c469190ee9b80dc8fc1fa71efb15d96"
+
+export async function syncGuestToAlumni({
+  notionPageId,
+  property,
+  checkOutDate,
+  roomNumber,
+  bedLabel,
+  roomType,
+}: {
+  notionPageId: string
+  property: "safina-plaza" | "peepal-tree"
+  checkOutDate: string
+  roomNumber?: string
+  bedLabel?: string | null
+  roomType?: "private" | "sharing"
+}): Promise<void> {
+  // Read the member page before we clear it
+  const raw = await notion.pages.retrieve({ page_id: notionPageId })
+  if (!isFullPage(raw)) return
+
+  const name       = getTitle(raw, "Member Name")
+  const email      = getEmail(raw, "Email")
+  const phone      = getPhone(raw, "Phone")
+  const gender     = getSelect(raw, "Gender")
+  const floor      = getSelect(raw, "Floor")
+  const checkIn    = getDate(raw, "Check In Date")
+  const depPaid    = getCheckbox(raw, "Deposit Paid ✓")
+  const depAmount  = getNumber(raw, "Deposit Amount (₹)")
+  const tariff     = getNumber(raw, "Room Tariff")
+  const org        = getRichText(raw, "Organisation / College")
+  const workplace  = getRichText(raw, "Place of work")
+  const designation = getRichText(raw, "Designation")
+  const address    = getRichText(raw, "Permanent Address")
+  const nationality = getRichText(raw, "Nationality")
+  const notes      = getRichText(raw, "Notes")
+
+  // Compute length of stay
+  let lengthOfStay = ""
+  if (checkIn && checkOutDate) {
+    const days = Math.round((new Date(checkOutDate).getTime() - new Date(checkIn).getTime()) / 86_400_000)
+    const months = Math.floor(days / 30)
+    lengthOfStay = months >= 1
+      ? `${months} month${months > 1 ? "s" : ""} (${days} days)`
+      : `${days} days`
+  }
+
+  // Room label: e.g. "215 B"
+  const roomLabel = roomNumber
+    ? bedLabel ? `${roomNumber} ${bedLabel}` : roomNumber
+    : null
+
+  const props: Props = {
+    "Member Name": { title: [{ text: { content: name || "Unknown" } }] },
+    "Status":      { select: { name: "Checked-Out" } },
+    "Property":    { select: { name: property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree" } },
+    "Check Out Date ": { date: { start: checkOutDate } },
+    "Security Deposit Paid ": { checkbox: depPaid },
+  }
+  if (email)        props["Email"]                  = { email }
+  if (phone)        props["Phone"]                  = { phone_number: phone }
+  if (gender)       props["Gender"]                 = { select: { name: gender } }
+  if (floor)        props["Floor"]                  = { select: { name: floor } }
+  if (checkIn)      props["Check In Date"]          = { date: { start: checkIn } }
+  if (tariff)       props["Room Tariff"]            = { number: tariff }
+  if (depAmount)    props["Deposit Amount (₹)"]     = { number: depAmount }
+  if (org)          props["Organisation / College"] = { rich_text: [{ text: { content: org } }] }
+  if (workplace)    props["Place of work"]          = { rich_text: [{ text: { content: workplace } }] }
+  if (designation)  props["Designation"]            = { rich_text: [{ text: { content: designation } }] }
+  if (address)      props["Permanent Address"]      = { rich_text: [{ text: { content: address } }] }
+  if (nationality)  props["Nationality"]            = { rich_text: [{ text: { content: nationality } }] }
+  if (lengthOfStay) props["Length Of Stay"]         = { rich_text: [{ text: { content: lengthOfStay } }] }
+  if (notes)        props["Notes"]                  = { rich_text: [{ text: { content: notes } }] }
+  if (roomLabel)    props["Room"]                   = { select: { name: roomLabel } }
+  if (roomType)     props["Room Type"]              = { select: { name: roomType === "private" ? "Single" : "Double" } }
+
+  await notion.pages.create({ parent: { database_id: DB_ALUMNI }, properties: props })
 }
 
 export async function checkOutGuest({
