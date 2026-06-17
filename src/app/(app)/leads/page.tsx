@@ -1,33 +1,28 @@
 "use client"
 
-import { useState } from "react"
-import { leads } from "@/lib/mock-data"
-import type { LeadStage } from "@/lib/types"
+import { useState, useEffect, useCallback } from "react"
+import type { Lead } from "@/lib/notion"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { Search, Plus, Link2, Phone, Mail, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Search, Phone, RefreshCw, ChevronRight, CheckCircle2, XCircle, Clock } from "lucide-react"
+import { usePropertyScope } from "@/lib/property-context"
 
-const stages: { id: LeadStage; label: string; dot: string; bg: string; text: string }[] = [
-  { id: "captured",          label: "Captured",          dot: "bg-slate-400", bg: "bg-slate-100", text: "text-slate-600" },
-  { id: "viewing-scheduled", label: "Viewing Scheduled", dot: "bg-amber-400",  bg: "bg-amber-50",  text: "text-amber-700" },
-  { id: "viewed",            label: "Viewed",            dot: "bg-blue-400",   bg: "bg-blue-50",   text: "text-blue-700" },
-  { id: "deposit-paid",      label: "Deposit Paid",      dot: "bg-emerald-400",bg: "bg-emerald-50",text: "text-emerald-700" },
-  { id: "checked-in",        label: "Checked In",        dot: "bg-slate-700",  bg: "bg-slate-100", text: "text-slate-700" },
-  { id: "dropped-off",       label: "Dropped Off",       dot: "bg-red-400",    bg: "bg-red-50",    text: "text-red-600" },
+// ─── Config ───────────────────────────────────────────────────────────────
+
+const STAGES: { id: Lead["status"]; label: string; dot: string; bg: string; text: string }[] = [
+  { id: "yet-to-confirm", label: "Yet to Confirm", dot: "bg-amber-400",  bg: "bg-amber-50",  text: "text-amber-700" },
+  { id: "won",            label: "Won",            dot: "bg-emerald-400", bg: "bg-emerald-50", text: "text-emerald-700" },
+  { id: "lost",           label: "Lost",           dot: "bg-red-400",    bg: "bg-red-50",    text: "text-red-600" },
 ]
 
-const sourceBadge: Record<string, string> = {
-  "walk-in":  "bg-orange-50 text-orange-700 border-orange-200",
-  "online":   "bg-blue-50 text-blue-700 border-blue-200",
-  "referral": "bg-purple-50 text-purple-700 border-purple-200",
-}
+// ─── Lead card ────────────────────────────────────────────────────────────
 
-function LeadCard({ lead, onClick }: { lead: typeof leads[0]; onClick: () => void }) {
-  const stage = stages.find(s => s.id === lead.stage)!
-  const daysSince = Math.floor((Date.now() - new Date(lead.createdAt).getTime()) / 86400000)
+function LeadCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
+  const stage    = STAGES.find(s => s.id === lead.status)!
+  const initials = lead.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()
 
   return (
     <button
@@ -35,23 +30,20 @@ function LeadCard({ lead, onClick }: { lead: typeof leads[0]; onClick: () => voi
       className="w-full text-left bg-card border border-border rounded-xl p-3.5 hover:border-slate-300 hover:shadow-sm transition-all duration-150 cursor-pointer group"
     >
       <div className="flex items-start gap-2.5 mb-2.5">
-        <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-xs font-semibold text-foreground shrink-0">
-          {lead.name.charAt(0)}
+        <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-[11px] font-semibold text-foreground shrink-0">
+          {initials || "?"}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-medium text-foreground truncate">{lead.name}</p>
+          <p className="text-[13px] font-medium text-foreground truncate">{lead.name || "Unnamed"}</p>
           <p className="text-[10px] text-muted-foreground capitalize">{lead.gender}</p>
         </div>
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border capitalize ${sourceBadge[lead.source]}`}>
-          {lead.source}
-        </span>
         {lead.property && (
           <Badge variant="outline" className="text-[10px] h-4 px-1.5 text-muted-foreground">
-            {lead.property === "safina-plaza" ? "Plaza" : "PT"}
+            {lead.property === "safina-plaza" ? "Plaza" : "Peepal"}
           </Badge>
         )}
         {lead.roomType && (
@@ -59,148 +51,212 @@ function LeadCard({ lead, onClick }: { lead: typeof leads[0]; onClick: () => voi
             {lead.roomType}
           </Badge>
         )}
+        {lead.leadAmount && (
+          <Badge variant="outline" className="text-[10px] h-4 px-1.5 text-muted-foreground">
+            ₹{lead.leadAmount.toLocaleString("en-IN")}
+          </Badge>
+        )}
       </div>
-
-      {lead.roomShown && (
-        <p className="text-[10px] text-muted-foreground mt-1.5">Shown: Rm {lead.roomShown}</p>
-      )}
 
       <div className="mt-2.5 flex items-center justify-between">
         <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${stage.bg} ${stage.text}`}>
           {stage.label}
         </span>
-        <span className="text-[10px] text-muted-foreground">{daysSince}d ago</span>
+        {lead.leadDate && (
+          <span className="text-[10px] text-muted-foreground">
+            {new Date(lead.leadDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+          </span>
+        )}
       </div>
-
-      {lead.bookingLinkSent && lead.stage === "viewed" && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-600">
-          <Link2 className="w-3 h-3" /> Link sent · expires {lead.bookingLinkExpiry}
-        </div>
-      )}
     </button>
   )
 }
 
-export default function LeadsPage() {
-  const [search, setSearch] = useState("")
-  const [selected, setSelected] = useState<typeof leads[0] | null>(null)
+// ─── Page ─────────────────────────────────────────────────────────────────
 
-  const filtered = leads.filter(l =>
+export default function LeadsPage() {
+  const [leads, setLeads]     = useState<Lead[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch]   = useState("")
+  const [selected, setSelected] = useState<Lead | null>(null)
+  const [updating, setUpdating] = useState(false)
+
+  const { scope } = usePropertyScope()
+
+  const fetchLeads = useCallback(() => {
+    setLoading(true)
+    fetch("/api/leads")
+      .then(r => r.json())
+      .then((data: Lead[]) => { setLeads(data); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { fetchLeads() }, [fetchLeads])
+
+  const scopedLeads = scope === "all" ? leads : leads.filter(l => l.property === scope || l.property === null)
+
+  const filtered = scopedLeads.filter(l =>
     l.name.toLowerCase().includes(search.toLowerCase()) ||
-    l.email.toLowerCase().includes(search.toLowerCase())
+    l.phone.includes(search)
   )
 
-  const stageCounts = stages.map(s => ({ ...s, count: leads.filter(l => l.stage === s.id).length }))
+  const stageCounts = STAGES.map(s => ({
+    ...s,
+    count: scopedLeads.filter(l => l.status === s.id).length,
+  }))
+
+  async function updateStatus(lead: Lead, status: Lead["status"]) {
+    setUpdating(true)
+    await fetch("/api/leads/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notionPageId: lead.notionPageId, status }),
+    })
+    setUpdating(false)
+    setSelected(null)
+    fetchLeads()
+  }
 
   return (
     <div className="space-y-4">
       {/* Funnel strip */}
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
-        {stageCounts.map((s, i) => (
+      <div className="grid grid-cols-3 gap-2">
+        {stageCounts.map(s => (
           <Card key={s.id} className="bg-card border-border shadow-none">
             <CardContent className="p-3 text-center">
-              <p className="text-xl font-semibold text-foreground tabular-nums">{s.count}</p>
+              <div className={`w-1.5 h-1.5 rounded-full ${s.dot} mx-auto mb-1`} />
+              <p className="text-xl font-semibold text-foreground tabular-nums">{loading ? "—" : s.count}</p>
               <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{s.label}</p>
-              {i < stageCounts.length - 1 && s.count > 0 && stageCounts[i + 1].count > 0 && (
-                <p className="text-[9px] text-muted-foreground/60 mt-0.5">
-                  {Math.round((stageCounts[i + 1].count / s.count) * 100)}%→
-                </p>
-              )}
             </CardContent>
           </Card>
         ))}
       </div>
 
-      {/* Actions */}
+      {/* Search + refresh */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search leads…" className="pl-8 h-8 text-xs" />
         </div>
-        <Button size="sm" className="h-8 gap-1.5 bg-foreground text-background hover:bg-foreground/90">
-          <Plus className="w-3.5 h-3.5" /> Add Lead
+        <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 ml-auto" onClick={fetchLeads}>
+          <RefreshCw className="w-3 h-3" /> Refresh
         </Button>
       </div>
 
-      {/* Kanban columns (exclude checked-in from active columns) */}
-      <div className="flex gap-3 overflow-x-auto pb-2">
-        {stages.filter(s => s.id !== "checked-in").map(stage => {
-          const stageLeads = filtered.filter(l => l.stage === stage.id)
-          return (
-            <div key={stage.id} className="space-y-2 min-w-[200px] w-[200px] shrink-0">
-              <div className="flex items-center gap-2 px-0.5">
-                <div className={`w-1.5 h-1.5 rounded-full ${stage.dot}`} />
-                <span className="text-[12px] font-medium text-foreground">{stage.label}</span>
-                <span className="text-[10px] text-muted-foreground ml-auto">{stageLeads.length}</span>
+      {loading && (
+        <div className="flex items-center justify-center h-48 text-muted-foreground text-sm gap-2">
+          <RefreshCw className="w-4 h-4 animate-spin" /> Loading from Notion…
+        </div>
+      )}
+
+      {/* Kanban columns */}
+      {!loading && (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {STAGES.map(stage => {
+            const stageLeads = filtered.filter(l => l.status === stage.id)
+            return (
+              <div key={stage.id} className="space-y-2 min-w-[220px] w-[220px] shrink-0">
+                <div className="flex items-center gap-2 px-0.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${stage.dot}`} />
+                  <span className="text-[12px] font-medium text-foreground">{stage.label}</span>
+                  <span className="text-[10px] text-muted-foreground ml-auto">{stageLeads.length}</span>
+                </div>
+                <div className="space-y-1.5">
+                  {stageLeads.map(lead => (
+                    <LeadCard key={lead.notionPageId} lead={lead} onClick={() => setSelected(lead)} />
+                  ))}
+                  {stageLeads.length === 0 && (
+                    <div className="h-16 border border-dashed border-border rounded-xl flex items-center justify-center text-[11px] text-muted-foreground">
+                      None
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1.5">
-                {stageLeads.map(lead => (
-                  <LeadCard key={lead.id} lead={lead} onClick={() => setSelected(lead)} />
-                ))}
-                {stageLeads.length === 0 && (
-                  <div className="h-16 border border-dashed border-border rounded-xl flex items-center justify-center text-[11px] text-muted-foreground">
-                    None
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Detail modal */}
-      <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
+      <Dialog open={!!selected} onOpenChange={open => { if (!open) setSelected(null) }}>
         <DialogContent className="bg-card border-border max-w-md shadow-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-semibold text-foreground">
-                {selected?.name.charAt(0)}
+                {selected?.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase() || "?"}
               </div>
-              {selected?.name}
+              {selected?.name || "Unnamed"}
             </DialogTitle>
           </DialogHeader>
           {selected && (
             <div className="space-y-3">
-              <div className="flex gap-4">
-                <a href={`mailto:${selected.email}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                  <Mail className="w-3.5 h-3.5" /> {selected.email}
-                </a>
+              {selected.phone && (
                 <a href={`tel:${selected.phone}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
                   <Phone className="w-3.5 h-3.5" /> {selected.phone}
                 </a>
-              </div>
+              )}
+
               <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 pt-1">
                 {[
-                  ["Stage",     stages.find(s => s.id === selected.stage)?.label],
-                  ["Source",    selected.source],
-                  ["Property",  selected.property === "safina-plaza" ? "Safina Plaza" : selected.property === "peepal-tree" ? "Peepal Tree" : "—"],
-                  ["Room Type", selected.roomType ?? "—"],
-                  ["Check-in",  selected.preferredCheckIn ?? "—"],
-                  ["Room Shown",selected.roomShown ?? "—"],
+                  ["Status",   STAGES.find(s => s.id === selected.status)?.label ?? "—"],
+                  ["Property", selected.property === "safina-plaza" ? "Safina Plaza" : selected.property === "peepal-tree" ? "Peepal Tree" : "—"],
+                  ["Room Type", selected.roomType ? (selected.roomType === "private" ? "Single" : "Double") : "—"],
+                  ["Amount",   selected.leadAmount ? `₹${selected.leadAmount.toLocaleString("en-IN")}` : "—"],
+                  ["Lead Date", selected.leadDate ? new Date(selected.leadDate).toLocaleDateString("en-IN") : "—"],
+                  ["Response", selected.responseDate ? new Date(selected.responseDate).toLocaleDateString("en-IN") : "—"],
                 ].map(([label, value]) => (
                   <div key={label}>
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
-                    <p className="text-xs font-medium text-foreground capitalize mt-0.5">{value}</p>
+                    <p className="text-xs font-medium text-foreground mt-0.5">{value}</p>
                   </div>
                 ))}
               </div>
-              {selected.dropReason && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-2.5">
-                  <p className="text-xs font-medium text-red-600">Drop reason</p>
-                  <p className="text-xs text-red-500 mt-0.5">{selected.dropReason}</p>
+
+              {/* Status actions */}
+              {selected.status !== "won" && selected.status !== "lost" && (
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs gap-1.5"
+                    disabled={updating}
+                    onClick={() => updateStatus(selected, "won")}
+                  >
+                    <CheckCircle2 className="w-3 h-3" /> Mark Won
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 h-8 text-xs gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                    disabled={updating}
+                    onClick={() => updateStatus(selected, "lost")}
+                  >
+                    <XCircle className="w-3 h-3" /> Mark Lost
+                  </Button>
                 </div>
               )}
-              <div className="flex gap-2 pt-1">
-                {selected.stage === "viewed" && !selected.bookingLinkSent && (
-                  <Button size="sm" className="flex-1 bg-foreground text-background hover:bg-foreground/90 h-8 text-xs">Send Booking Link</Button>
-                )}
-                {selected.stage === "viewed" && selected.bookingLinkSent && (
-                  <Button size="sm" variant="outline" className="flex-1 h-8 text-xs">Resend Link</Button>
-                )}
-                {selected.stage === "captured" && (
-                  <Button size="sm" className="flex-1 bg-foreground text-background hover:bg-foreground/90 h-8 text-xs">Schedule Viewing</Button>
-                )}
-              </div>
+
+              {selected.status === "won" && (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Won{selected.conversionDate ? ` on ${new Date(selected.conversionDate).toLocaleDateString("en-IN")}` : ""}
+                </div>
+              )}
+
+              {selected.status === "lost" && (
+                <div className="flex items-center gap-1.5 text-xs text-red-500">
+                  <XCircle className="w-3.5 h-3.5" /> Lost
+                  <Button
+                    size="sm" variant="ghost"
+                    className="ml-auto h-6 text-[10px] text-muted-foreground"
+                    disabled={updating}
+                    onClick={() => updateStatus(selected, "yet-to-confirm")}
+                  >
+                    <Clock className="w-3 h-3 mr-1" /> Reopen
+                  </Button>
+                </div>
+              )}
+
+              {updating && <p className="text-xs text-muted-foreground">Updating Notion…</p>}
             </div>
           )}
         </DialogContent>

@@ -504,3 +504,188 @@ export async function activateBooking(formPageId: string): Promise<{
 
   return results
 }
+
+// ─── Leads ────────────────────────────────────────────────────────────────
+
+const DB_LEADS        = "2d369190-ee9b-808a-bc09-e7e15340663d"
+const DB_MAINTENANCE  = "1d269190-ee9b-8096-a27c-f902861bba4e"
+
+// Direct REST query for databases shared via standard integration (not dataSources)
+async function queryDatabase(databaseId: string): Promise<PageObjectResponse[]> {
+  const results: PageObjectResponse[] = []
+  let cursor: string | undefined
+
+  do {
+    const body: Record<string, unknown> = {
+      sorts: [{ timestamp: "created_time", direction: "descending" }],
+      page_size: 100,
+    }
+    if (cursor) body.start_cursor = cursor
+
+    const res = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+
+    const data = await res.json() as { results: PageObjectResponse[]; has_more: boolean; next_cursor: string | null }
+    for (const p of data.results) {
+      if (isFullPage(p)) results.push(p)
+    }
+    cursor = data.has_more ? (data.next_cursor ?? undefined) : undefined
+  } while (cursor)
+
+  return results
+}
+
+export type Lead = {
+  notionPageId: string
+  name: string
+  phone: string
+  gender: "male" | "female" | "other"
+  property: "safina-plaza" | "peepal-tree" | null
+  roomType: "private" | "sharing" | null
+  status: "yet-to-confirm" | "won" | "lost"
+  leadAmount: number | null
+  leadDate: string | null
+  responseDate: string | null
+  conversionDate: string | null
+  createdAt: string
+}
+
+function mapLeadProperty(raw: string | null): "safina-plaza" | "peepal-tree" | null {
+  if (!raw) return null
+  const l = raw.toLowerCase()
+  if (l.includes("peepal")) return "peepal-tree"
+  return "safina-plaza" // "Hub Co" → Plaza (default)
+}
+
+function mapLeadStatus(raw: string | null): Lead["status"] {
+  if (raw === "Won")  return "won"
+  if (raw === "Lost") return "lost"
+  return "yet-to-confirm"
+}
+
+export async function getLeads(): Promise<Lead[]> {
+  const pages = await queryDatabase(DB_LEADS)
+
+  return pages.map(p => {
+      const props = p.properties
+      const g = (k: string, t: string): string => {
+        const v = props[k]
+        if (!v) return ""
+        if (t === "title")        return (v as {type:"title";title:{plain_text:string}[]}).title.map(r => r.plain_text).join("").trim()
+        if (t === "rich_text")    return (v as {type:"rich_text";rich_text:{plain_text:string}[]}).rich_text.map(r => r.plain_text).join("").trim()
+        if (t === "select")       return (v as {type:"select";select:{name:string}|null}).select?.name ?? ""
+        if (t === "phone_number") return (v as {type:"phone_number";phone_number:string|null}).phone_number ?? ""
+        if (t === "number")       return String((v as {type:"number";number:number|null}).number ?? "")
+        if (t === "date")         return (v as {type:"date";date:{start:string}|null}).date?.start ?? ""
+        if (t === "created_time") return (v as {type:"created_time";created_time:string}).created_time
+        return ""
+      }
+      const genderRaw = g("Gender ", "select").toLowerCase()
+      return {
+        notionPageId: p.id,
+        name:           g("Lead Name", "title"),
+        phone:          g("Phone", "phone_number"),
+        gender:         (genderRaw === "male" || genderRaw === "female") ? genderRaw : "other",
+        property:       mapLeadProperty(g("Property name ", "select")),
+        roomType:       g("Room Type ", "select").toLowerCase() === "single" ? "private" : g("Room Type ", "select") ? "sharing" : null,
+        status:         mapLeadStatus(g("Status ", "select")),
+        leadAmount:     g("Lead Amount ", "number") ? Number(g("Lead Amount ", "number")) : null,
+        leadDate:       g("Lead Date", "date") || g("Lead Date ", "date") || null,
+        responseDate:   g("Response Date", "date") || null,
+        conversionDate: g("Conversion Date", "date") || null,
+        createdAt:      g("Created by", "created_time") || p.created_time,
+      } satisfies Lead
+    })
+}
+
+export async function updateLeadStatus(notionPageId: string, status: Lead["status"]): Promise<void> {
+  const map: Record<Lead["status"], string> = {
+    "yet-to-confirm": "Yet to confirm",
+    "won":  "Won",
+    "lost": "Lost",
+  }
+  await notion.pages.update({
+    page_id: notionPageId,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    properties: { "Status ": { select: { name: map[status] } } } as any,
+  })
+}
+
+// ─── Maintenance tickets ──────────────────────────────────────────────────
+
+export type MaintenanceTicket = {
+  notionPageId: string
+  guestName: string
+  room: string
+  description: string
+  category: string[]
+  location: string[]
+  isUrgent: boolean
+  resolved: boolean
+  assignedStaff: string[]
+  cost: number | null
+  fixType: string | null
+  resolutionDate: string | null
+  comment: string
+  submittedAt: string
+}
+
+export async function getMaintenanceTickets(): Promise<MaintenanceTicket[]> {
+  const pages = await queryDatabase(DB_MAINTENANCE)
+
+  return pages.map(p => {
+      const props = p.properties
+      const rt  = (k: string) => (props[k] as {type:"rich_text";rich_text:{plain_text:string}[]}|undefined)?.rich_text.map(r => r.plain_text).join("").trim() ?? ""
+      const ms  = (k: string) => ((props[k] as {type:"multi_select";multi_select:{name:string}[]}|undefined)?.multi_select ?? []).map(o => o.name)
+      const sel = (k: string) => (props[k] as {type:"select";select:{name:string}|null}|undefined)?.select?.name ?? ""
+      const num = (k: string) => (props[k] as {type:"number";number:number|null}|undefined)?.number ?? null
+      const chk = (k: string) => (props[k] as {type:"checkbox";checkbox:boolean}|undefined)?.checkbox ?? false
+      const dt  = (k: string) => (props[k] as {type:"date";date:{start:string}|null}|undefined)?.date?.start ?? null
+      const ct  = (k: string) => (props[k] as {type:"created_time";created_time:string}|undefined)?.created_time ?? ""
+
+      const urgencyOptions = ms("Is It Urgent?")
+      const isUrgent = urgencyOptions.some(o => o.toLowerCase().includes("immediate"))
+
+      return {
+        notionPageId:   p.id,
+        guestName:      rt("Name"),
+        room:           String(num("Room Number") ?? ""),
+        description:    rt("Describe The Issue"),
+        category:       ms("What's Up?"),
+        location:       ms("Where Is The Issue?"),
+        isUrgent,
+        resolved:       chk("Status"),
+        assignedStaff:  ms("HK Staff "),
+        cost:           num("Cost incurred"),
+        fixType:        sel("Fix Type") || null,
+        resolutionDate: dt("Date of resolution"),
+        comment:        rt("Comment"),
+        submittedAt:    ct("Submission time"),
+      } satisfies MaintenanceTicket
+    })
+}
+
+export async function resolveTicket(notionPageId: string, comment?: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updates: any = {
+    "Status": { checkbox: true },
+    "Date of resolution": { date: { start: new Date().toISOString().slice(0, 10) } },
+  }
+  if (comment) updates["Comment"] = { rich_text: [{ text: { content: comment } }] }
+  await notion.pages.update({ page_id: notionPageId, properties: updates })
+}
+
+export async function assignTicket(notionPageId: string, staffNames: string[]): Promise<void> {
+  await notion.pages.update({
+    page_id: notionPageId,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    properties: { "HK Staff ": { multi_select: staffNames.map(n => ({ name: n })) } } as any,
+  })
+}
