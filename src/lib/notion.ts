@@ -328,3 +328,179 @@ export async function markDepositPaid(notionPageId: string) {
     properties: { "Deposit Paid ✓": { checkbox: true } },
   })
 }
+
+// ─── Guest Info Form (from Lovable booking site) ──────────────────────────
+
+const DS_FORM = process.env.NOTION_DS_FORM!
+
+export type PendingBooking = {
+  notionPageId: string
+  guestName: string
+  gender: "male" | "female" | "other"
+  email: string
+  phone: string
+  room: string
+  property: "safina-plaza" | "peepal-tree" | null
+  checkInDate: string | null
+  checkOutDate: string | null
+  tariff: number
+  status: string | null
+  submittedAt: string
+  idProofType: string | null
+  organisation: string | null
+  occupation: string | null
+  emergencyContact: string | null
+  petParent: boolean
+  rulesAccepted: boolean
+}
+
+function inferProperty(room: string): "safina-plaza" | "peepal-tree" | null {
+  const base = room.trim().replace(/\s*[AB]+$/i, "").replace("AB", "")
+  const n = parseInt(base, 10)
+  if (isNaN(n)) return null
+  if (n >= 100 && n < 200) return "peepal-tree"
+  if (n >= 200) return "safina-plaza"
+  return null
+}
+
+function formBooking(page: PageObjectResponse): PendingBooking {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = page.properties as Record<string, any>
+
+  const guestName = p["🧑‍💼 Guest Name"]?.title?.map((t: { plain_text: string }) => t.plain_text).join("").trim() ?? ""
+  const genderRaw = p["⚧️ Gender"]?.multi_select?.[0]?.name?.toLowerCase() ?? "male"
+  const gender: "male" | "female" | "other" = genderRaw === "female" ? "female" : genderRaw === "other" ? "other" : "male"
+  const email = p["✉️ Email"]?.email ?? ""
+  const phone = p["📞 Contact Number"]?.number ? String(p["📞 Contact Number"].number) : ""
+  const room = p["Room"]?.rich_text?.map((t: { plain_text: string }) => t.plain_text).join("").trim() ?? ""
+  const tariff = p["Tariff"]?.number ?? 0
+  const status = p["Status"]?.select?.name ?? null
+  const submittedAt = p["Submission time"]?.created_time ?? page.created_time
+  const checkInDate = p["date:Check In Date:start"] ?? p["Check In Date"]?.date?.start ?? null
+  const checkOutDate = p["date:Check Out Date:start"] ?? p["Check Out Date"]?.date?.start ?? null
+  const idProofType = p["🪪 ID Proof Type"]?.multi_select?.[0]?.name ?? null
+  const organisation = p["🏢 Organisation / 🎓 College Name"]?.rich_text?.map((t: { plain_text: string }) => t.plain_text).join("") ?? null
+  const occupation = p["🧩 Occupation"]?.rich_text?.map((t: { plain_text: string }) => t.plain_text).join("") ?? null
+  const emergencyContact = p["🚨 Emergency Contact Name"]?.rich_text?.map((t: { plain_text: string }) => t.plain_text).join("") ?? null
+  const petParent = p["Pet Parent"]?.multi_select?.[0]?.name === "Yes"
+  const rulesAccepted = (p["📜 Rules and Regulations"]?.multi_select?.length ?? 0) > 0
+
+  return {
+    notionPageId: page.id,
+    guestName,
+    gender,
+    email,
+    phone,
+    room,
+    property: room ? inferProperty(room) : null,
+    checkInDate,
+    checkOutDate,
+    tariff,
+    status,
+    submittedAt,
+    idProofType,
+    organisation,
+    occupation,
+    emergencyContact,
+    petParent,
+    rulesAccepted,
+  }
+}
+
+export async function getPendingBookings(): Promise<PendingBooking[]> {
+  const pages = await queryAll(DS_FORM)
+  return pages
+    .map(formBooking)
+    .filter(b => {
+      // Show only bookings that haven't been fully activated yet
+      const skip = ["checked in ( welcome chit sheet)", "Done"]
+      return b.guestName && !skip.includes(b.status ?? "")
+    })
+    .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+}
+
+export async function activateBooking(formPageId: string): Promise<{
+  ok: boolean
+  property?: string
+  depositLinkUrl?: string
+  subscriptionUrl?: string
+  error?: string
+}> {
+  // 1. Read the form page
+  const page = await notion.pages.retrieve({ page_id: formPageId }) as PageObjectResponse
+  const booking = formBooking(page)
+
+  if (!booking.guestName) return { ok: false, error: "No guest name on form" }
+  if (!booking.room) return { ok: false, error: "No room specified on form" }
+  if (!booking.property) return { ok: false, error: `Cannot determine property from room "${booking.room}"` }
+
+  // 2. Find the matching vacant bed page in the Active Members DB
+  const targetDS = booking.property === "safina-plaza" ? DS_PLAZA : DS_PEEPAL
+  const allPages = await queryAll(targetDS)
+
+  const matchPage = allPages.find(p => {
+    const roomProp = p.properties["Room"]
+    const roomVal = roomProp?.type === "select" ? (roomProp.select?.name ?? "") : ""
+    return roomVal.trim().toLowerCase() === booking.room.trim().toLowerCase()
+  })
+
+  if (!matchPage) return { ok: false, error: `Room "${booking.room}" not found in ${booking.property} database` }
+
+  // 3. Write guest info to the Active Members DB page
+  await checkInGuest({
+    notionPageId: matchPage.id,
+    property: booking.property,
+    guestName: booking.guestName,
+    gender: booking.gender === "other" ? "male" : booking.gender,
+    phone: booking.phone,
+    email: booking.email,
+    checkInDate: booking.checkInDate ?? new Date().toISOString().slice(0, 10),
+    checkOutDate: booking.checkOutDate ?? undefined,
+    monthlyRate: booking.tariff,
+  })
+
+  // 4. Update form page status to "pre-check in + arrival"
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await notion.pages.update({
+    page_id: formPageId,
+    properties: { Status: { select: { name: "pre-check in + arrival" } } } as any,
+  })
+
+  const results: { ok: boolean; property?: string; depositLinkUrl?: string; subscriptionUrl?: string } = {
+    ok: true,
+    property: booking.property,
+  }
+
+  // 5. Send Razorpay deposit link if phone available
+  if (booking.phone) {
+    try {
+      const { createDepositLink } = await import("./razorpay")
+      const link = await createDepositLink({
+        property: booking.property,
+        guestName: booking.guestName,
+        email: booking.email,
+        phone: booking.phone,
+        amount: booking.tariff,
+        notionPageId: matchPage.id,
+      })
+      results.depositLinkUrl = link.short_url
+    } catch { /* non-fatal */ }
+  }
+
+  // 6. Create rent subscription if phone + tariff available
+  if (booking.phone && booking.tariff > 0) {
+    try {
+      const { createRentSubscription } = await import("./razorpay")
+      const sub = await createRentSubscription({
+        property: booking.property,
+        guestName: booking.guestName,
+        email: booking.email,
+        phone: booking.phone,
+        monthlyRate: booking.tariff,
+      })
+      results.subscriptionUrl = sub.short_url
+    } catch { /* non-fatal */ }
+  }
+
+  return results
+}

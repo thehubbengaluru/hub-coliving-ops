@@ -1,19 +1,78 @@
 "use client"
 
-import { dashboardStats, revenueByMonth, occupancyTrend, invoices, tickets, leads } from "@/lib/mock-data"
+import { useState, useEffect, useCallback } from "react"
+import { revenueByMonth, occupancyTrend } from "@/lib/mock-data"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Building2, Users, AlertCircle, Wrench, IndianRupee, ArrowUpRight, Clock, CheckCircle2, TrendingUp } from "lucide-react"
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
+import { Button } from "@/components/ui/button"
+import {
+  Building2, Users, AlertCircle, Wrench, IndianRupee,
+  ArrowUpRight, Clock, CheckCircle2, TrendingUp, RefreshCw, Zap,
+} from "lucide-react"
+import {
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from "recharts"
 import Link from "next/link"
+import type { Room } from "@/lib/types"
+import type { PendingBooking } from "@/lib/notion"
+import { usePropertyScope } from "@/lib/property-context"
 
-const CHART_COLORS = {
-  safina:     "#334155",
-  peepal:     "#94a3b8",
-  occupancy:  "#334155",
-  grid:       "#f1f5f9",
-  tick:       "#94a3b8",
+// ─── Types ────────────────────────────────────────────────────────────────
+
+type LiveStats = {
+  totalBeds: number
+  occupied: number
+  vacant: number
+  incoming: number
+  blocked: number
+  special: number
+  occupancyRate: number
+  revenueEstimate: number   // sum of monthlyRate for occupied beds
+  plazaOccupied: number
+  peepalOccupied: number
+  plazaTotal: number
+  peepalTotal: number
+  depositsDue: number       // plaza beds with depositPaid=false
+  depositsPaid: number
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function computeStats(rooms: Room[], scope: string): LiveStats {
+  const filtered = scope === "all" ? rooms : rooms.filter(r => r.property === scope)
+  let totalBeds = 0, occupied = 0, vacant = 0, incoming = 0, blocked = 0, special = 0
+  let revenueEstimate = 0, depositsDue = 0, depositsPaid = 0
+  let plazaOccupied = 0, peepalOccupied = 0, plazaTotal = 0, peepalTotal = 0
+
+  for (const room of filtered) {
+    for (const bed of room.beds) {
+      totalBeds++
+      if (room.property === "safina-plaza") plazaTotal++
+      else peepalTotal++
+
+      switch (bed.status) {
+        case "occupied":
+          occupied++
+          revenueEstimate += room.monthlyRate
+          if (room.property === "safina-plaza") plazaOccupied++
+          else peepalOccupied++
+          if (bed.depositPaid === false) depositsDue++
+          if (bed.depositPaid === true)  depositsPaid++
+          break
+        case "vacant":   vacant++;   break
+        case "incoming": incoming++; break
+        case "blocked":  blocked++;  break
+        case "special":  special++;  break
+      }
+    }
+  }
+
+  const occupancyRate = totalBeds > 0 ? Math.round((occupied / totalBeds) * 100) : 0
+  return { totalBeds, occupied, vacant, incoming, blocked, special, occupancyRate, revenueEstimate, plazaOccupied, peepalOccupied, plazaTotal, peepalTotal, depositsDue, depositsPaid }
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────
 
 function StatCard({ label, value, sub, icon: Icon, trend, accent = false }: {
   label: string; value: string; sub?: string; icon: React.ElementType; trend?: string; accent?: boolean
@@ -53,27 +112,88 @@ const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: 
   )
 }
 
+const CHART_COLORS = { safina: "#334155", peepal: "#94a3b8", occupancy: "#334155", grid: "#f1f5f9", tick: "#94a3b8" }
+
+// ─── Page ─────────────────────────────────────────────────────────────────
+
 export default function DashboardPage() {
-  const overdueInvoices = invoices.filter(i => i.status === "overdue")
-  const openTickets = tickets.filter(t => t.status !== "resolved")
-  const activeLeads = leads.filter(l => !["checked-in", "dropped-off"].includes(l.stage))
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [pending, setPending] = useState<PendingBooking[]>([])
+  const [loading, setLoading] = useState(true)
+  const { scope } = usePropertyScope()
+
+  const fetchData = useCallback(() => {
+    setLoading(true)
+    Promise.all([
+      fetch("/api/rooms").then(r => r.json()),
+      fetch("/api/bookings/pending").then(r => r.json()),
+    ]).then(([roomData, pendingData]: [Room[], PendingBooking[]]) => {
+      setRooms(roomData)
+      setPending(Array.isArray(pendingData) ? pendingData : [])
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const stats = computeStats(rooms, scope)
+  const scopedPending = scope === "all" ? pending : pending.filter(b => b.property === scope)
+
+  const scopeLabel = scope === "safina-plaza" ? "Safina Plaza" : scope === "peepal-tree" ? "Peepal Tree" : "Both properties"
 
   return (
     <div className="space-y-5">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Occupancy Rate"    value={`${dashboardStats.occupancyRate}%`} sub="13 of 18 beds"        icon={Building2}     trend="+3%"  accent />
-        <StatCard label="Revenue This Month" value={`₹${(dashboardStats.revenueThisMonth / 1000).toFixed(0)}k`} sub="Both properties" icon={IndianRupee} trend="+8%" />
-        <StatCard label="Outstanding"        value={`₹${(dashboardStats.outstandingPayments / 1000).toFixed(0)}k`} sub="2 overdue"    icon={AlertCircle} />
-        <StatCard label="Active Leads"       value={String(activeLeads.length)} sub={`${dashboardStats.conversionRate}% conversion`} icon={Users} trend="+2" />
+      {/* Live data notice + refresh */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {loading
+            ? <span className="text-xs text-muted-foreground flex items-center gap-1.5"><RefreshCw className="w-3 h-3 animate-spin" /> Loading from Notion…</span>
+            : <span className="flex items-center gap-1.5 text-[11px] text-emerald-600"><CheckCircle2 className="w-3 h-3" /> Live from Notion · {scopeLabel}</span>
+          }
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={fetchData}>
+          <RefreshCw className="w-3 h-3" /> Refresh
+        </Button>
       </div>
 
-      {/* Charts */}
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Occupancy Rate"
+          value={loading ? "—" : `${stats.occupancyRate}%`}
+          sub={loading ? "Loading…" : `${stats.occupied} of ${stats.totalBeds} beds`}
+          icon={Building2}
+          accent
+        />
+        <StatCard
+          label="Est. Revenue / Month"
+          value={loading ? "—" : `₹${Math.round(stats.revenueEstimate / 1000)}k`}
+          sub={loading ? "" : `${scopeLabel} · occupied beds`}
+          icon={IndianRupee}
+        />
+        <StatCard
+          label="Pending Bookings"
+          value={loading ? "—" : String(scopedPending.length)}
+          sub="From booking site — activate to confirm"
+          icon={Clock}
+        />
+        <StatCard
+          label="Deposits Due"
+          value={loading ? "—" : String(stats.depositsDue)}
+          sub={loading ? "" : `${stats.depositsPaid} paid (Plaza only)`}
+          icon={AlertCircle}
+        />
+      </div>
+
+      {/* Charts — revenue trend uses representative mock data; will update once Razorpay webhooks are live */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
         <Card className="lg:col-span-3 bg-card border-border shadow-none">
           <CardHeader className="pb-1 pt-5 px-5">
             <CardTitle className="text-sm font-semibold text-foreground">Revenue by Property</CardTitle>
-            <p className="text-xs text-muted-foreground">Jan – Jun 2026</p>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              Jan – Jun 2026
+              <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 text-amber-600 border-amber-200 bg-amber-50">Representative</Badge>
+            </p>
           </CardHeader>
           <CardContent className="px-2 pb-5">
             <ResponsiveContainer width="100%" height={200}>
@@ -93,7 +213,10 @@ export default function DashboardPage() {
         <Card className="lg:col-span-2 bg-card border-border shadow-none">
           <CardHeader className="pb-1 pt-5 px-5">
             <CardTitle className="text-sm font-semibold text-foreground">Occupancy Trend</CardTitle>
-            <p className="text-xs text-muted-foreground">6-month view</p>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              6-month view
+              <Badge variant="outline" className="text-[9px] h-4 px-1 ml-1 text-amber-600 border-amber-200 bg-amber-50">Representative</Badge>
+            </p>
           </CardHeader>
           <CardContent className="px-2 pb-5">
             <ResponsiveContainer width="100%" height={200}>
@@ -117,98 +240,139 @@ export default function DashboardPage() {
 
       {/* Bottom row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        {/* Room status */}
+        {/* Live bed breakdown */}
         <Card className="bg-card border-border shadow-none">
           <CardHeader className="pb-2 pt-5 px-5 flex-row items-center justify-between">
-            <CardTitle className="text-sm font-semibold text-foreground">Room Status</CardTitle>
+            <CardTitle className="text-sm font-semibold text-foreground">Bed Status</CardTitle>
             <Link href="/rooms" className="text-xs text-muted-foreground hover:text-foreground transition-colors">View board →</Link>
           </CardHeader>
           <CardContent className="px-5 pb-5 space-y-3">
-            {[
-              { label: "Occupied",  count: dashboardStats.occupiedRooms,  bar: "bg-slate-800", dot: "bg-emerald-500" },
-              { label: "Vacant",    count: dashboardStats.vacantRooms,    bar: "bg-orange-400", dot: "bg-orange-400" },
-              { label: "Incoming",  count: dashboardStats.incomingRooms,  bar: "bg-amber-400",  dot: "bg-amber-400" },
-              { label: "Blocked",   count: dashboardStats.blockedRooms,   bar: "bg-red-400",    dot: "bg-red-400" },
+            {loading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Loading…
+              </div>
+            ) : [
+              { label: "Occupied",  count: stats.occupied,  bar: "bg-slate-800", dot: "bg-emerald-500" },
+              { label: "Vacant",    count: stats.vacant,    bar: "bg-orange-400", dot: "bg-orange-400" },
+              { label: "Incoming",  count: stats.incoming,  bar: "bg-amber-400",  dot: "bg-amber-400" },
+              { label: "Blocked / Special", count: stats.blocked + stats.special, bar: "bg-red-400", dot: "bg-red-400" },
             ].map(({ label, count, bar, dot }) => (
               <div key={label} className="flex items-center gap-3">
                 <div className={`w-1.5 h-1.5 rounded-full ${dot} shrink-0`} />
                 <span className="text-xs text-muted-foreground flex-1">{label}</span>
                 <div className="flex items-center gap-2">
                   <div className="w-20 h-1 bg-muted rounded-full overflow-hidden">
-                    <div className={`h-full ${bar} rounded-full`} style={{ width: `${(count / dashboardStats.totalRooms) * 100}%` }} />
+                    <div className={`h-full ${bar} rounded-full`} style={{ width: stats.totalBeds > 0 ? `${(count / stats.totalBeds) * 100}%` : "0%" }} />
                   </div>
                   <span className="text-xs font-medium text-foreground tabular-nums w-4 text-right">{count}</span>
                 </div>
               </div>
             ))}
+            {!loading && (
+              <div className="pt-1 border-t border-border grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                <div>Plaza: <span className="font-medium text-foreground">{stats.plazaOccupied}/{stats.plazaTotal}</span></div>
+                <div>Peepal: <span className="font-medium text-foreground">{stats.peepalOccupied}/{stats.peepalTotal}</span></div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Overdue */}
+        {/* Pending bookings to action */}
         <Card className="bg-card border-border shadow-none">
           <CardHeader className="pb-2 pt-5 px-5 flex-row items-center justify-between">
-            <CardTitle className="text-sm font-semibold text-foreground">Overdue Payments</CardTitle>
-            <Link href="/payments" className="text-xs text-muted-foreground hover:text-foreground transition-colors">View all →</Link>
+            <CardTitle className="text-sm font-semibold text-foreground">Pending Bookings</CardTitle>
+            <Link href="/guests" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Activate →</Link>
           </CardHeader>
           <CardContent className="px-5 pb-5 space-y-3">
-            {overdueInvoices.length === 0 ? (
+            {loading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw className="w-3 h-3 animate-spin" /> Loading…</div>
+            ) : scopedPending.length === 0 ? (
               <div className="flex items-center gap-2 text-xs text-emerald-600">
-                <CheckCircle2 className="w-3.5 h-3.5" /> All payments up to date
+                <CheckCircle2 className="w-3.5 h-3.5" /> All bookings activated
               </div>
-            ) : overdueInvoices.map(inv => (
-              <div key={inv.id} className="flex items-start justify-between gap-2 pb-2.5 border-b border-border last:border-0 last:pb-0">
+            ) : scopedPending.slice(0, 4).map(b => (
+              <div key={b.notionPageId} className="flex items-start justify-between gap-2 pb-2.5 border-b border-border last:border-0 last:pb-0">
                 <div>
-                  <p className="text-xs font-medium text-foreground">{inv.guestName}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Rm {inv.roomId.replace("r", "")} · {inv.period}</p>
+                  <p className="text-xs font-medium text-foreground">{b.guestName}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Rm {b.room} · {b.property === "safina-plaza" ? "Plaza" : b.property === "peepal-tree" ? "Peepal" : "Unknown"}
+                  </p>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className="text-xs font-semibold text-red-500 tabular-nums">₹{((inv.amount + (inv.lateFee ?? 0)) / 1000).toFixed(1)}k</p>
-                  <p className="text-[10px] text-red-400">+₹{inv.lateFee} fee</p>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* Tickets */}
-        <Card className="bg-card border-border shadow-none">
-          <CardHeader className="pb-2 pt-5 px-5 flex-row items-center justify-between">
-            <CardTitle className="text-sm font-semibold text-foreground">Open Tickets</CardTitle>
-            <Link href="/maintenance" className="text-xs text-muted-foreground hover:text-foreground transition-colors">View all →</Link>
-          </CardHeader>
-          <CardContent className="px-5 pb-5 space-y-3">
-            {openTickets.slice(0, 4).map(ticket => (
-              <div key={ticket.id} className="flex items-start gap-2.5 pb-2.5 border-b border-border last:border-0 last:pb-0">
-                <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
-                  ticket.urgency === "high" ? "bg-red-400" : ticket.urgency === "medium" ? "bg-amber-400" : "bg-blue-400"
-                }`} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-foreground truncate">{ticket.description.slice(0, 44)}…</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Rm {ticket.roomNumber} · {ticket.property === "safina-plaza" ? "Plaza" : "PT"}</p>
-                </div>
-                <Badge variant="outline" className={`text-[10px] h-4 px-1.5 shrink-0 font-normal border ${
-                  ticket.status === "in-progress" ? "border-amber-200 text-amber-600 bg-amber-50" : "border-red-200 text-red-500 bg-red-50"
-                }`}>
-                  {ticket.status === "in-progress" ? "Active" : "Open"}
+                <Badge variant="outline" className="text-[9px] h-4 px-1.5 shrink-0 bg-amber-50 text-amber-700 border-amber-200">
+                  Awaiting
                 </Badge>
               </div>
             ))}
-            {openTickets.length === 0 && (
-              <div className="flex items-center gap-2 text-xs text-emerald-600">
-                <CheckCircle2 className="w-3.5 h-3.5" /> No open tickets
-              </div>
+            {!loading && scopedPending.length > 4 && (
+              <p className="text-[11px] text-muted-foreground">+{scopedPending.length - 4} more in Guests → Pending</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Deposits due (Plaza) */}
+        <Card className="bg-card border-border shadow-none">
+          <CardHeader className="pb-2 pt-5 px-5 flex-row items-center justify-between">
+            <CardTitle className="text-sm font-semibold text-foreground">Deposits (Plaza)</CardTitle>
+            <Link href="/payments" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Manage →</Link>
+          </CardHeader>
+          <CardContent className="px-5 pb-5 space-y-3">
+            {loading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw className="w-3 h-3 animate-spin" /> Loading…</div>
+            ) : (
+              <>
+                {[
+                  { label: "Deposit paid",     count: stats.depositsPaid, dot: "bg-emerald-400", text: "text-emerald-600" },
+                  { label: "Deposit due",      count: stats.depositsDue,  dot: "bg-amber-400",   text: "text-amber-700" },
+                ].map(({ label, count, dot, text }) => (
+                  <div key={label} className="flex items-center gap-2">
+                    <div className={`w-1.5 h-1.5 rounded-full ${dot} shrink-0`} />
+                    <span className="text-xs text-muted-foreground flex-1">{label}</span>
+                    <span className={`text-xs font-semibold tabular-nums ${text}`}>{count}</span>
+                  </div>
+                ))}
+                <div className="pt-2 border-t border-border flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Zap className="w-3 h-3" /> Peepal deposit tracking not in Notion
+                </div>
+                {stats.depositsDue > 0 && (
+                  <Link href="/payments">
+                    <Button size="sm" className="w-full h-7 text-[11px] mt-1 bg-foreground text-background hover:bg-foreground/90">
+                      Send {stats.depositsDue} missing link{stats.depositsDue > 1 ? "s" : ""}
+                    </Button>
+                  </Link>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Quick stats */}
+      {/* Quick stats row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "Leads This Week", value: "7",  icon: TrendingUp, sub: "3 awaiting response" },
-          { label: "Pending Refunds", value: "2",  icon: Clock,       sub: "Within 7 working days" },
-          { label: "Auto-debit Live", value: "8",  icon: CheckCircle2,sub: "Mandates active" },
-          { label: "Rooms Checked Out", value: "1",icon: Wrench,      sub: "Awaiting inspection" },
+          {
+            label: "Beds Occupied",
+            value: loading ? "—" : String(stats.occupied),
+            icon: CheckCircle2,
+            sub: loading ? "" : `of ${stats.totalBeds} total`,
+          },
+          {
+            label: "Vacant Beds",
+            value: loading ? "—" : String(stats.vacant),
+            icon: Building2,
+            sub: "Available now",
+          },
+          {
+            label: "Incoming",
+            value: loading ? "—" : String(stats.incoming),
+            icon: TrendingUp,
+            sub: "Booked, not yet arrived",
+          },
+          {
+            label: "To Action",
+            value: loading ? "—" : String(scopedPending.length + stats.depositsDue),
+            icon: AlertCircle,
+            sub: `${scopedPending.length} pending bookings · ${stats.depositsDue} deposits due`,
+          },
         ].map(({ label, value, icon: Icon, sub }) => (
           <Card key={label} className="bg-card border-border shadow-none">
             <CardContent className="p-4 flex items-center gap-3">
@@ -223,6 +387,14 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      {/* Leads / Maintenance / Billing notice */}
+      <div className="bg-muted/40 border border-border rounded-xl p-4 flex items-start gap-3">
+        <Users className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <span className="font-medium text-foreground">Leads, Maintenance, and Billing</span> panels will show live data once those Notion databases are connected. Revenue trend charts will update once Razorpay webhook secrets are configured.
+        </p>
       </div>
     </div>
   )
