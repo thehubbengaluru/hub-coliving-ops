@@ -235,3 +235,61 @@ export async function markDepositReceived({
     reference_number: reference,
   })
 }
+
+// ─── Fetch invoices list ──────────────────────────────────────────────────
+
+export interface ZohoInvoiceListItem {
+  invoice_id:     string
+  invoice_number: string
+  customer_name:  string
+  status:         string   // sent | overdue | paid | draft | void | partially_paid
+  total:          number
+  balance:        number   // outstanding (0 if paid)
+  date:           string
+  due_date:       string
+  email:          string
+  is_emailed:     boolean
+  invoice_url:    string
+}
+
+export async function listInvoices(property: Property): Promise<ZohoInvoiceListItem[]> {
+  const all: ZohoInvoiceListItem[] = []
+  let page = 1
+
+  while (true) {
+    const data = await zohoFetch("GET", `/invoices?page=${page}&per_page=100&sort_column=date&sort_order=D`, property)
+    const items = (data.invoices ?? []) as ZohoInvoiceListItem[]
+    all.push(...items)
+    if (!data.page_context || !(data.page_context as {has_more_page:boolean}).has_more_page) break
+    page++
+  }
+
+  return all
+}
+
+// ─── Fetch retainer invoices (security deposits) ─────────────────────────
+
+export interface ZohoRetainerListItem {
+  retainerinvoice_id:     string
+  retainerinvoice_number: string
+  customer_name:          string
+  status:                 string   // draft | sent | paid | void
+  total:                  number
+  balance:                number
+  date:                   string
+}
+
+export async function listRetainerInvoices(property: Property): Promise<ZohoRetainerListItem[]> {
+  const all: ZohoRetainerListItem[] = []
+  let page = 1
+
+  while (true) {
+    const data = await zohoFetch("GET", `/retainerinvoices?page=${page}&per_page=100`, property)
+    const items = (data.retainerinvoices ?? []) as ZohoRetainerListItem[]
+    all.push(...items)
+    if (!data.page_context || !(data.page_context as {has_more_page:boolean}).has_more_page) break
+    page++
+  }
+
+  return all
+}
