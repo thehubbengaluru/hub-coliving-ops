@@ -92,6 +92,8 @@ export async function createRentSubscription({
     notes: { property, guest_name: guestName },
   })
 
+  // Store guest contact + rate in notes so the webhook can create Zoho invoices
+  // for month 2 onwards without any additional lookups
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sub = await (rzp.subscriptions as any).create({
     plan_id: plan.id,
@@ -100,7 +102,14 @@ export async function createRentSubscription({
     total_count: 120, // 10-year cap
     start_at: startAtUnix,
     notify_info: { notify_phone: phone, notify_email: email },
-    notes: { property, guest_name: guestName, zoho_invoice_id: zohoInvoiceId ?? "" },
+    notes: {
+      property,
+      guest_name:      guestName,
+      guest_email:     email,
+      guest_phone:     phone,
+      monthly_rate:    String(monthlyRate),
+      zoho_invoice_id: zohoInvoiceId ?? "",
+    },
   })
 
   return sub as RazorpaySubscription
