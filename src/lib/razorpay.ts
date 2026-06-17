@@ -30,6 +30,7 @@ export async function createDepositLink({
   phone,
   amount,
   notionPageId,
+  zohoRetainerId,
 }: {
   property: Property
   guestName: string
@@ -37,6 +38,7 @@ export async function createDepositLink({
   phone: string
   amount: number
   notionPageId?: string
+  zohoRetainerId?: string
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
   const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
@@ -49,7 +51,7 @@ export async function createDepositLink({
     customer: { name: guestName, email, contact: phone },
     notify: { sms: true, email: true },
     reminder_enable: true,
-    notes: { property, type: "security_deposit", guest_name: guestName, notion_page_id: notionPageId ?? "" },
+    notes: { property, type: "security_deposit", guest_name: guestName, notion_page_id: notionPageId ?? "", zoho_retainer_id: zohoRetainerId ?? "" },
   })
 
   return link as RazorpayLink
@@ -61,12 +63,14 @@ export async function createRentSubscription({
   email,
   phone,
   monthlyRate,
+  zohoInvoiceId,
 }: {
   property: Property
   guestName: string
   email: string
   phone: string
   monthlyRate: number
+  zohoInvoiceId?: string
 }): Promise<RazorpaySubscription> {
   const rzp = getClient(property)
   const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
@@ -96,7 +100,7 @@ export async function createRentSubscription({
     total_count: 120, // 10-year cap
     start_at: startAtUnix,
     notify_info: { notify_phone: phone, notify_email: email },
-    notes: { property, guest_name: guestName },
+    notes: { property, guest_name: guestName, zoho_invoice_id: zohoInvoiceId ?? "" },
   })
 
   return sub as RazorpaySubscription

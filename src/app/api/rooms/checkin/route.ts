@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { checkInGuest } from "@/lib/notion"
 import { createDepositLink, createRentSubscription } from "@/lib/razorpay"
+import { createRentInvoice, sendInvoice, createDepositReceipt } from "@/lib/zoho"
 import type { Property } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -10,19 +11,20 @@ export async function POST(req: Request) {
     const {
       notionPageId, property, guestName, gender,
       phone, email, checkInDate, checkOutDate, monthlyRate,
-      sendDepositLink, createSubscription,
+      sendDepositLink, createSubscription, depositAmount,
     } = await req.json() as {
-      notionPageId: string
-      property: Property
-      guestName: string
-      gender: "male" | "female"
-      phone: string
-      email: string
-      checkInDate: string
-      checkOutDate?: string
-      monthlyRate: number
-      sendDepositLink: boolean
+      notionPageId:      string
+      property:          Property
+      guestName:         string
+      gender:            "male" | "female"
+      phone:             string
+      email:             string
+      checkInDate:       string
+      checkOutDate?:     string
+      monthlyRate:       number
+      sendDepositLink:   boolean
       createSubscription: boolean
+      depositAmount?:    number
     }
 
     // 1. Write to Notion
@@ -30,11 +32,12 @@ export async function POST(req: Request) {
 
     const results: Record<string, string> = {}
 
-    // 2. Send deposit payment link
+    // 2. Razorpay deposit payment link
     if (sendDepositLink && phone) {
       try {
+        const depAmount = depositAmount ?? monthlyRate
         const link = await createDepositLink({
-          property, guestName, email: email ?? "", phone, amount: monthlyRate,
+          property, guestName, email: email ?? "", phone, amount: depAmount,
           notionPageId,
         })
         results.depositLinkUrl = link.short_url
@@ -43,13 +46,51 @@ export async function POST(req: Request) {
       }
     }
 
-    // 3. Create rent subscription
+    // 3. Razorpay rent subscription
     if (createSubscription && phone) {
       try {
-        const sub = await createRentSubscription({ property, guestName, email: email ?? "", phone, monthlyRate })
+        const sub = await createRentSubscription({ property, guestName, email: email ?? "", phone, monthlyRate, zohoInvoiceId: results.zohoInvoiceId })
         results.subscriptionUrl = sub.short_url
       } catch (e) {
         results.subscriptionError = e instanceof Error ? e.message : "Failed"
+      }
+    }
+
+    // 4. Zoho Books — rent invoice (only if Zoho is configured)
+    if (process.env.ZOHO_CLIENT_ID && email) {
+      try {
+        const invoice = await createRentInvoice({ property, guestName, email, phone, amount: monthlyRate, checkInDate })
+        await sendInvoice(property, invoice.invoice_id)
+        results.zohoInvoiceId     = invoice.invoice_id
+        results.zohoInvoiceNumber = invoice.invoice_number
+      } catch (e) {
+        results.zohoInvoiceError = e instanceof Error ? e.message : "Failed"
+        console.error("[checkin] Zoho invoice error:", e)
+      }
+    }
+
+    // 5. Zoho Books — security deposit retainer + re-create Razorpay deposit link with Zoho ID embedded
+    let zohoRetainerId: string | undefined
+    if (process.env.ZOHO_CLIENT_ID && email && depositAmount) {
+      try {
+        const receipt     = await createDepositReceipt({ property, guestName, email, phone, amount: depositAmount, date: checkInDate })
+        zohoRetainerId    = receipt.retainerinvoice_id
+        results.zohoDepositId     = receipt.retainerinvoice_id
+        results.zohoDepositNumber = receipt.retainerinvoice_number
+      } catch (e) {
+        results.zohoDepositError = e instanceof Error ? e.message : "Failed"
+        console.error("[checkin] Zoho deposit error:", e)
+      }
+    }
+
+    // Re-send deposit link with Zoho retainer ID embedded in notes (so webhook can mark it paid)
+    if (sendDepositLink && phone && zohoRetainerId && !results.depositLinkUrl) {
+      try {
+        const depAmount = depositAmount ?? monthlyRate
+        const link = await createDepositLink({ property, guestName, email: email ?? "", phone, amount: depAmount, notionPageId, zohoRetainerId })
+        results.depositLinkUrl = link.short_url
+      } catch (e) {
+        results.depositLinkError = e instanceof Error ? e.message : "Failed"
       }
     }
 
