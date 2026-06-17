@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { checkInGuest } from "@/lib/notion"
 import { createDepositLink, createRentSubscription } from "@/lib/razorpay"
-import { createRentInvoice, sendInvoice, createDepositReceipt } from "@/lib/zoho"
+import { createRentInvoice, sendInvoice, createDepositReceipt, zohoEnabled } from "@/lib/zoho"
 import type { Property } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -56,8 +56,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4. Zoho Books — rent invoice (only if Zoho is configured)
-    if (process.env.ZOHO_CLIENT_ID && email) {
+    // 4. Zoho Books — rent invoice (only if Zoho is configured for this property)
+    if (zohoEnabled(property) && email) {
       try {
         const invoice = await createRentInvoice({ property, guestName, email, phone, amount: monthlyRate, checkInDate })
         await sendInvoice(property, invoice.invoice_id)
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
 
     // 5. Zoho Books — security deposit retainer + re-create Razorpay deposit link with Zoho ID embedded
     let zohoRetainerId: string | undefined
-    if (process.env.ZOHO_CLIENT_ID && email && depositAmount) {
+    if (zohoEnabled(property) && email && depositAmount) {
       try {
         const receipt     = await createDepositReceipt({ property, guestName, email, phone, amount: depositAmount, date: checkInDate })
         zohoRetainerId    = receipt.retainerinvoice_id

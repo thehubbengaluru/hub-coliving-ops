@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { verifyWebhookSignature } from "@/lib/razorpay"
 import { markDepositPaid } from "@/lib/notion"
-import { markDepositReceived, markInvoicePaid } from "@/lib/zoho"
+import { markDepositReceived, markInvoicePaid, zohoEnabled } from "@/lib/zoho"
 import type { Property } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
       }
 
       // Mark deposit retainer paid in Zoho Books
-      if (process.env.ZOHO_CLIENT_ID && zohoRetainerId && property) {
+      if (zohoEnabled(property) && zohoRetainerId) {
         try {
           await markDepositReceived({ property, retainerInvoiceId: zohoRetainerId, amount: paidAmount, paymentDate, reference: paymentRef })
           console.log("[webhook] Zoho retainer marked paid:", zohoRetainerId)
@@ -90,7 +90,7 @@ export async function POST(req: Request) {
       console.log("[webhook] subscription charged:", notes)
 
       // Mark Zoho invoice paid if we have the ID
-      if (process.env.ZOHO_CLIENT_ID && zohoInvId && property) {
+      if (zohoEnabled(property) && zohoInvId) {
         try {
           await markInvoicePaid({ property, invoiceId: zohoInvId, amount: paidAmount, paymentDate, reference: paymentRef })
           console.log("[webhook] Zoho invoice marked paid:", zohoInvId)
