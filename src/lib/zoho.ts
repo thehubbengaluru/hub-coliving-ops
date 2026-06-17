@@ -68,7 +68,8 @@ async function getAccessToken(property: Property): Promise<string> {
 async function zohoFetch(method: string, path: string, property: Property, body?: unknown) {
   const acct  = getAccount(property)
   const token = await getAccessToken(property)
-  const url   = `${acct.apiBase}${path}?organization_id=${acct.orgId}`
+  const sep   = path.includes("?") ? "&" : "?"
+  const url   = `${acct.apiBase}${path}${sep}organization_id=${acct.orgId}`
 
   const res = await fetch(url, {
     method,

@@ -174,18 +174,24 @@ function EntityCard({ entity, onResend }: { entity: Entity; onResend: (property:
 // ─── Page ─────────────────────────────────────────────────────────────────
 
 export default function BillingPage() {
-  const [data, setData]     = useState<BillingData | null>(null)
+  const [data, setData]       = useState<BillingData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
   const [sending, setSending] = useState<string | null>(null)
 
   const { scope } = usePropertyScope()
 
   const fetchData = useCallback(() => {
     setLoading(true)
+    setError(null)
     fetch("/api/billing")
-      .then(r => r.json())
-      .then((d: BillingData) => { setData(d); setLoading(false) })
-      .catch(() => setLoading(false))
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok || d.error) { setError(d.error ?? "Failed to load billing data"); setLoading(false); return }
+        setData(d)
+        setLoading(false)
+      })
+      .catch(e => { setError(e.message ?? "Network error"); setLoading(false) })
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
@@ -231,6 +237,19 @@ export default function BillingPage() {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground text-sm gap-2">
         <RefreshCw className="w-4 h-4 animate-spin" /> Loading from Zoho Books…
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+        <AlertCircle className="w-6 h-6 text-red-400" />
+        <p className="text-sm font-medium text-foreground">Failed to load billing data</p>
+        <p className="text-xs text-muted-foreground max-w-sm">{error}</p>
+        <Button size="sm" variant="outline" className="mt-1 gap-1.5" onClick={fetchData}>
+          <RefreshCw className="w-3 h-3" /> Retry
+        </Button>
       </div>
     )
   }
