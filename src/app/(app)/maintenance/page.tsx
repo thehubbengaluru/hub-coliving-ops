@@ -104,9 +104,9 @@ export default function MaintenancePage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap w-full">
         <Select value={statusFilter} onValueChange={v => setStatusFilter(v ?? "all")}>
-          <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectTrigger className="flex-1 min-w-[100px] h-9 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="open">Open</SelectItem>
@@ -114,7 +114,7 @@ export default function MaintenancePage() {
           </SelectContent>
         </Select>
         <Select value={urgencyFilter} onValueChange={v => setUrgencyFilter(v ?? "all")}>
-          <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Urgency" /></SelectTrigger>
+          <SelectTrigger className="flex-1 min-w-[100px] h-9 text-xs"><SelectValue placeholder="Urgency" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Urgency</SelectItem>
             <SelectItem value="urgent">Urgent</SelectItem>
@@ -122,7 +122,7 @@ export default function MaintenancePage() {
           </SelectContent>
         </Select>
         <span className="text-xs text-muted-foreground ml-auto">{loading ? "…" : `${filtered.length} tickets`}</span>
-        <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={fetchTickets}>
+        <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 shrink-0" onClick={fetchTickets}>
           <RefreshCw className="w-3 h-3" /> Refresh
         </Button>
       </div>

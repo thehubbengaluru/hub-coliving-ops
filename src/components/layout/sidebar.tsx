@@ -33,7 +33,7 @@ export default function Sidebar() {
   const { scope, setScope } = usePropertyScope()
 
   return (
-    <aside className="w-56 shrink-0 flex flex-col h-full border-r border-border bg-card">
+    <aside className="w-56 shrink-0 hidden lg:flex flex-col h-full border-r border-border bg-card">
       {/* Logo */}
       <div className="h-13 flex items-center px-5 border-b border-border">
         <div className="flex items-center gap-2.5">

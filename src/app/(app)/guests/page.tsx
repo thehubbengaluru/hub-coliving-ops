@@ -311,8 +311,8 @@ export default function GuestsPage() {
   return (
     <div className="space-y-4">
       {/* Tab + search */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex bg-muted rounded-md p-0.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+        <div className="flex bg-muted rounded-md p-0.5 self-start">
           <button
             onClick={() => setTab("active")}
             className={`px-3 py-1 rounded-[5px] text-xs font-medium transition-all duration-150 cursor-pointer flex items-center gap-1.5 ${
@@ -339,17 +339,17 @@ export default function GuestsPage() {
           </button>
         </div>
 
-        <div className="relative">
+        <div className="relative flex-1 sm:flex-none">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search guests or rooms…"
-            className="pl-8 h-8 text-xs w-52"
+            className="pl-8 h-9 text-xs w-full sm:w-52"
           />
         </div>
 
-        <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 ml-auto" onClick={() => { fetchActive(); fetchPending() }}>
+        <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 sm:ml-auto self-start" onClick={() => { fetchActive(); fetchPending() }}>
           <RefreshCw className="w-3 h-3" /> Refresh
         </Button>
       </div>

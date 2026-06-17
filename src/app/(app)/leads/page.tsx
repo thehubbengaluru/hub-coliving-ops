@@ -133,12 +133,12 @@ export default function LeadsPage() {
       </div>
 
       {/* Search + refresh */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex items-center gap-2 w-full">
+        <div className="relative flex-1">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search leads…" className="pl-8 h-8 text-xs" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search leads…" className="pl-8 h-9 text-xs" />
         </div>
-        <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 ml-auto" onClick={fetchLeads}>
+        <Button size="sm" variant="outline" className="h-9 text-xs gap-1.5 shrink-0" onClick={fetchLeads}>
           <RefreshCw className="w-3 h-3" /> Refresh
         </Button>
       </div>
@@ -151,7 +151,9 @@ export default function LeadsPage() {
 
       {/* Kanban columns */}
       {!loading && (
-        <div className="flex gap-3 overflow-x-auto pb-2">
+        <>
+          <p className="text-[10px] text-muted-foreground sm:hidden">← Scroll to see all columns</p>
+          <div className="flex gap-3 overflow-x-auto pb-2 -mx-3 px-3 sm:mx-0 sm:px-0">
           {STAGES.map(stage => {
             const stageLeads = filtered.filter(l => l.status === stage.id)
             return (
@@ -175,6 +177,7 @@ export default function LeadsPage() {
             )
           })}
         </div>
+        </>
       )}
 
       {/* Detail modal */}
