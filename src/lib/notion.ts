@@ -265,3 +265,66 @@ export async function getGuestContact(notionPageId: string): Promise<{ email: st
 
   return { email: getProp("Email"), phone: getProp("Phone") }
 }
+
+// ─── Notion write-back ────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Props = Record<string, any>
+
+export async function checkInGuest({
+  notionPageId, property, guestName, gender, phone, email,
+  checkInDate, checkOutDate, monthlyRate,
+}: {
+  notionPageId: string
+  property: "safina-plaza" | "peepal-tree"
+  guestName: string
+  gender: "male" | "female"
+  phone: string
+  email: string
+  checkInDate: string
+  checkOutDate?: string
+  monthlyRate: number
+}) {
+  const genderLabel = gender === "male" ? "Male" : "Female"
+  const props: Props = {
+    "Member Name":    { title: [{ text: { content: guestName } }] },
+    "Gender":         { select: { name: genderLabel } },
+    "Check In Date":  { date: { start: checkInDate } },
+    "Check Out Date ": checkOutDate ? { date: { start: checkOutDate } } : { date: null },
+    "Phone":          { phone_number: phone },
+    "Email":          { email },
+  }
+  if (property === "safina-plaza") {
+    props["Deposit Amount (₹)"] = { number: monthlyRate }
+    props["Deposit Paid ✓"]     = { checkbox: false }
+  } else {
+    props["Tariff with GST"] = { number: monthlyRate }
+    props["Status"]          = { select: { name: "Occupied" } }
+  }
+  await notion.pages.update({ page_id: notionPageId, properties: props })
+}
+
+export async function checkOutGuest({
+  notionPageId, property, checkOutDate,
+}: {
+  notionPageId: string
+  property: "safina-plaza" | "peepal-tree"
+  checkOutDate: string
+}) {
+  const props: Props = {
+    "Check Out Date ": { date: { start: checkOutDate } },
+  }
+  if (property === "safina-plaza") {
+    props["Member Name"] = { title: [{ text: { content: "Vacant" } }] }
+  } else {
+    props["Status"] = { select: { name: "Checked-Out" } }
+  }
+  await notion.pages.update({ page_id: notionPageId, properties: props })
+}
+
+export async function markDepositPaid(notionPageId: string) {
+  await notion.pages.update({
+    page_id: notionPageId,
+    properties: { "Deposit Paid ✓": { checkbox: true } },
+  })
+}

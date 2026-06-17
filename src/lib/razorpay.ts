@@ -29,12 +29,14 @@ export async function createDepositLink({
   email,
   phone,
   amount,
+  notionPageId,
 }: {
   property: Property
   guestName: string
   email: string
   phone: string
   amount: number
+  notionPageId?: string
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
   const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
@@ -47,7 +49,7 @@ export async function createDepositLink({
     customer: { name: guestName, email, contact: phone },
     notify: { sms: true, email: true },
     reminder_enable: true,
-    notes: { property, type: "security_deposit", guest_name: guestName },
+    notes: { property, type: "security_deposit", guest_name: guestName, notion_page_id: notionPageId ?? "" },
   })
 
   return link as RazorpayLink
