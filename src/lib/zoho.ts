@@ -268,6 +268,30 @@ export async function listInvoices(property: Property): Promise<ZohoInvoiceListI
   return all
 }
 
+// Returns only invoices whose line items contain one of the given HSN codes.
+// Fetches each invoice's details in parallel — safe for small invoice counts.
+export async function listInvoicesByHsn(
+  property: Property,
+  hsnCodes: string[],
+): Promise<ZohoInvoiceListItem[]> {
+  const all = await listInvoices(property)
+  if (all.length === 0) return []
+
+  const details = await Promise.all(
+    all.map(inv =>
+      zohoFetch("GET", `/invoices/${inv.invoice_id}`, property)
+        .then(d => {
+          const lineItems = ((d.invoice as Record<string, unknown>)?.line_items ?? []) as { hsn_or_sac?: string }[]
+          const match = lineItems.some(li => li.hsn_or_sac && hsnCodes.includes(li.hsn_or_sac))
+          return match ? inv : null
+        })
+        .catch(() => null)
+    )
+  )
+
+  return details.filter((x): x is ZohoInvoiceListItem => x !== null)
+}
+
 // ─── Fetch retainer invoices (security deposits) ─────────────────────────
 
 export interface ZohoRetainerListItem {

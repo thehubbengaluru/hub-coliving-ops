@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server"
-import { listInvoices, listRetainerInvoices, zohoEnabled } from "@/lib/zoho"
+import { listInvoicesByHsn, listRetainerInvoices, zohoEnabled } from "@/lib/zoho"
 
 export const dynamic = "force-dynamic"
+
+const RENT_HSN = ["9963", "996311"]
 
 export async function GET() {
   try {
@@ -9,10 +11,10 @@ export async function GET() {
       plazaInvoices, peepalInvoices,
       plazaDeposits, peepalDeposits,
     ] = await Promise.all([
-      zohoEnabled("safina-plaza") ? listInvoices("safina-plaza")         : Promise.resolve([]),
-      zohoEnabled("peepal-tree")  ? listInvoices("peepal-tree")          : Promise.resolve([]),
-      zohoEnabled("safina-plaza") ? listRetainerInvoices("safina-plaza") : Promise.resolve([]),
-      zohoEnabled("peepal-tree")  ? listRetainerInvoices("peepal-tree")  : Promise.resolve([]),
+      zohoEnabled("safina-plaza") ? listInvoicesByHsn("safina-plaza", RENT_HSN) : Promise.resolve([]),
+      zohoEnabled("peepal-tree")  ? listInvoicesByHsn("peepal-tree",  RENT_HSN) : Promise.resolve([]),
+      zohoEnabled("safina-plaza") ? listRetainerInvoices("safina-plaza")         : Promise.resolve([]),
+      zohoEnabled("peepal-tree")  ? listRetainerInvoices("peepal-tree")          : Promise.resolve([]),
     ])
 
     return NextResponse.json({
