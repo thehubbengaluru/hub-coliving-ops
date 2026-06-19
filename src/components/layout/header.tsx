@@ -14,27 +14,27 @@ import { cn } from "@/lib/utils"
 import { usePropertyScope, type PropertyScope } from "@/lib/property-context"
 
 const titles: Record<string, { title: string; subtitle: string }> = {
-  "/dashboard":       { title: "Dashboard",          subtitle: "Overview of Hub Co-Living operations" },
-  "/rooms":           { title: "Room Board",          subtitle: "Live occupancy across all properties" },
-  "/leads":           { title: "Leads Pipeline",      subtitle: "Track prospects from inquiry to check-in" },
-  "/guests":          { title: "Guests",              subtitle: "Active members and booking details" },
-  "/payments":        { title: "Payments",            subtitle: "Invoice tracking and payment recovery" },
-  "/billing":         { title: "Billing",             subtitle: "Invoicing and Zoho Books sync" },
-  "/maintenance":     { title: "Maintenance",         subtitle: "Open tickets and room readiness" },
-  "/reports":         { title: "Reports & Analytics", subtitle: "Revenue, occupancy, and conversion metrics" },
-  "/special-bookings":{ title: "Special Bookings",    subtitle: "Owner guests, Airbnb blocks, and team stays" },
+  "/admin/dashboard":       { title: "Dashboard",          subtitle: "Overview of Hub Co-Living operations" },
+  "/admin/rooms":           { title: "Room Board",          subtitle: "Live occupancy across all properties" },
+  "/admin/leads":           { title: "Leads Pipeline",      subtitle: "Track prospects from inquiry to check-in" },
+  "/admin/guests":          { title: "Guests",              subtitle: "Active members and booking details" },
+  "/admin/payments":        { title: "Payments",            subtitle: "Invoice tracking and payment recovery" },
+  "/admin/billing":         { title: "Billing",             subtitle: "Invoicing and Zoho Books sync" },
+  "/admin/maintenance":     { title: "Maintenance",         subtitle: "Open tickets and room readiness" },
+  "/admin/reports":         { title: "Reports & Analytics", subtitle: "Revenue, occupancy, and conversion metrics" },
+  "/admin/special-bookings":{ title: "Special Bookings",    subtitle: "Owner guests, Airbnb blocks, and team stays" },
 }
 
 const navItems = [
-  { href: "/dashboard",       label: "Dashboard",        icon: LayoutDashboard },
-  { href: "/rooms",           label: "Room Board",       icon: Building2 },
-  { href: "/leads",           label: "Leads Pipeline",   icon: Users },
-  { href: "/guests",          label: "Guests",           icon: UserCheck },
-  { href: "/payments",        label: "Payments",         icon: CreditCard },
-  { href: "/billing",         label: "Billing",          icon: FileText },
-  { href: "/maintenance",     label: "Maintenance",      icon: Wrench },
-  { href: "/reports",         label: "Reports",          icon: BarChart3 },
-  { href: "/special-bookings",label: "Special Bookings", icon: Star },
+  { href: "/admin/dashboard",       label: "Dashboard",        icon: LayoutDashboard },
+  { href: "/admin/rooms",           label: "Room Board",       icon: Building2 },
+  { href: "/admin/leads",           label: "Leads Pipeline",   icon: Users },
+  { href: "/admin/guests",          label: "Guests",           icon: UserCheck },
+  { href: "/admin/payments",        label: "Payments",         icon: CreditCard },
+  { href: "/admin/billing",         label: "Billing",          icon: FileText },
+  { href: "/admin/maintenance",     label: "Maintenance",      icon: Wrench },
+  { href: "/admin/reports",         label: "Reports",          icon: BarChart3 },
+  { href: "/admin/special-bookings",label: "Special Bookings", icon: Star },
 ]
 
 const SCOPES: { value: PropertyScope; label: string }[] = [

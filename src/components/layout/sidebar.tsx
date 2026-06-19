@@ -11,15 +11,15 @@ import { cn } from "@/lib/utils"
 import { usePropertyScope, type PropertyScope } from "@/lib/property-context"
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/rooms", label: "Room Board", icon: Building2 },
-  { href: "/leads", label: "Leads Pipeline", icon: Users, badge: 3 },
-  { href: "/guests", label: "Guests", icon: UserCheck },
-  { href: "/payments", label: "Payments", icon: CreditCard, badge: 2 },
-  { href: "/billing", label: "Billing", icon: FileText },
-  { href: "/maintenance", label: "Maintenance", icon: Wrench, badge: 4 },
-  { href: "/reports", label: "Reports", icon: BarChart3 },
-  { href: "/special-bookings", label: "Special Bookings", icon: Star },
+  { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/rooms", label: "Room Board", icon: Building2 },
+  { href: "/admin/leads", label: "Leads Pipeline", icon: Users, badge: 3 },
+  { href: "/admin/guests", label: "Guests", icon: UserCheck },
+  { href: "/admin/payments", label: "Payments", icon: CreditCard, badge: 2 },
+  { href: "/admin/billing", label: "Billing", icon: FileText },
+  { href: "/admin/maintenance", label: "Maintenance", icon: Wrench, badge: 4 },
+  { href: "/admin/reports", label: "Reports", icon: BarChart3 },
+  { href: "/admin/special-bookings", label: "Special Bookings", icon: Star },
 ]
 
 const SCOPES: { value: PropertyScope; label: string }[] = [

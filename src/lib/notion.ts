@@ -124,12 +124,16 @@ function plazaBed(page: PageObjectResponse, bed: BedLabel): Bed {
   const isServiced = name.includes("serviced")
   const isAirbnb   = name.toLowerCase().includes("airbnb")
 
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const checkInDate = checkIn ? new Date(checkIn + "T00:00:00") : null
+
   let status: BedStatus
-  if (isServiced)              status = "blocked"
-  else if (isVacant && depPaid) status = "incoming"
-  else if (isVacant)           status = "vacant"
-  else if (isAirbnb)           status = "special"
-  else                         status = "occupied"
+  if (isServiced)                                                       status = "blocked"
+  else if (isVacant && depPaid)                                         status = "incoming"
+  else if (isVacant)                                                    status = "vacant"
+  else if (isAirbnb)                                                    status = "special"
+  else if (!isVacant && checkInDate && checkInDate > today)             status = "incoming"
+  else                                                                  status = "occupied"
 
   return {
     id: `plaza-${page.id}`,
@@ -156,10 +160,20 @@ function peepalBed(page: PageObjectResponse, bed: BedLabel): Bed {
   const checkIn      = getDate(page, "Check In Date")
   const checkOut     = getDate(page, "Check Out Date ")
 
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const checkInDate = checkIn ? new Date(checkIn + "T00:00:00") : null
+
   let status: BedStatus
-  if (notionStatus === "Occupied") {
-    // Zero-tariff guests are special bookings (owner's guests / co-builders)
-    status = tariff === 0 ? "special" : "occupied"
+  if (notionStatus === "Incoming") {
+    status = "incoming"
+  } else if (notionStatus === "Occupied") {
+    // If check-in date is in the future, treat as incoming booking
+    if (checkInDate && checkInDate > today) {
+      status = "incoming"
+    } else {
+      // Zero-tariff guests are special bookings (owner's guests / co-builders)
+      status = tariff === 0 ? "special" : "occupied"
+    }
   } else if (notionStatus === "Blocked") {
     status = "blocked"
   } else {
@@ -312,12 +326,15 @@ export async function checkInGuest({
     "Phone":          { phone_number: phone },
     "Email":          { email },
   }
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const isIncomingBooking = new Date(checkInDate) > today
+
   if (property === "safina-plaza") {
     props["Deposit Amount (₹)"] = { number: monthlyRate }
     props["Deposit Paid ✓"]     = { checkbox: false }
   } else {
     props["Tariff with GST"] = { number: monthlyRate }
-    props["Status"]          = { select: { name: "Occupied" } }
+    props["Status"]          = { select: { name: isIncomingBooking ? "Incoming" : "Occupied" } }
   }
   await notion.pages.update({ page_id: notionPageId, properties: props })
 }
@@ -424,7 +441,9 @@ export async function checkOutGuest({
 export async function markDepositPaid(notionPageId: string) {
   await notion.pages.update({
     page_id: notionPageId,
-    properties: { "Deposit Paid ✓": { checkbox: true } },
+    properties: {
+      "Deposit Paid ✓": { checkbox: true },
+    },
   })
 }
 
@@ -787,4 +806,32 @@ export async function assignTicket(notionPageId: string, staffNames: string[]): 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     properties: { "HK Staff ": { multi_select: staffNames.map(n => ({ name: n })) } } as any,
   })
+}
+
+// ─── Bed page lookup (for confirm route) ─────────────────────────────────────
+
+export async function findBedPageId(
+  property: "safina-plaza" | "peepal-tree",
+  roomNumber: string,
+  bedLabel: string | null
+): Promise<string | null> {
+  const dataSourceId = property === "safina-plaza" ? DS_PLAZA : DS_PEEPAL
+  const pages = await queryAll(dataSourceId)
+
+  // The Room select field stores values like "202 A", "301", "105B", "302AB"
+  // Build the target string to match against what parseRoom would reconstruct
+  const target = bedLabel ? `${roomNumber} ${bedLabel}` : roomNumber
+
+  for (const page of pages) {
+    const raw = getSelect(page, "Room")
+    if (!raw) continue
+    const { base, bed } = parseRoom(raw)
+    // Reconstruct to canonical form for comparison
+    const canonical = bed ? `${base} ${bed}` : base
+    if (canonical.toLowerCase() === target.toLowerCase()) {
+      return page.id
+    }
+  }
+
+  return null
 }

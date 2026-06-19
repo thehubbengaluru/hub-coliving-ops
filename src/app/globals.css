@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Calistoga:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Calistoga:ital@0;1&family=Cinzel:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -11,6 +11,7 @@
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --font-heading: 'Calistoga', serif;
+  --font-display: 'Cinzel', serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,39 +49,42 @@
 }
 
 :root {
-  /* Light minimalist — clean whites, slate text, subtle borders */
-  --background:     oklch(0.985 0 0);
-  --foreground:     oklch(0.14 0.01 255);
+  /* The Hub Co-Living — white base, amber #F9A91F primary, black text */
+  --hub-amber:      #F9A91F;
+  --hub-amber-dark: #e09518;
+  --hub-amber-light:#fef3d8;
+  --background:     oklch(1 0 0);
+  --foreground:     oklch(0.08 0 0);
   --card:           oklch(1 0 0);
-  --card-foreground:oklch(0.14 0.01 255);
+  --card-foreground:oklch(0.08 0 0);
   --popover:        oklch(1 0 0);
-  --popover-foreground: oklch(0.14 0.01 255);
-  --primary:        oklch(0.32 0.02 255);
-  --primary-foreground: oklch(1 0 0);
-  --secondary:      oklch(0.95 0.005 255);
-  --secondary-foreground: oklch(0.32 0.02 255);
-  --muted:          oklch(0.96 0.004 255);
-  --muted-foreground: oklch(0.52 0.01 255);
-  --accent:         oklch(0.95 0.005 255);
-  --accent-foreground: oklch(0.14 0.01 255);
+  --popover-foreground: oklch(0.08 0 0);
+  --primary:        #F9A91F;
+  --primary-foreground: oklch(0.08 0 0);
+  --secondary:      oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.08 0 0);
+  --muted:          oklch(0.96 0 0);
+  --muted-foreground: oklch(0.50 0 0);
+  --accent:         #F9A91F;
+  --accent-foreground: oklch(0.08 0 0);
   --destructive:    oklch(0.54 0.20 25);
-  --border:         oklch(0.91 0.005 255);
-  --input:          oklch(0.91 0.005 255);
-  --ring:           oklch(0.32 0.02 255);
-  --chart-1:        oklch(0.50 0.12 220);
+  --border:         oklch(0.91 0 0);
+  --input:          oklch(0.91 0 0);
+  --ring:           #F9A91F;
+  --chart-1:        #F9A91F;
   --chart-2:        oklch(0.62 0.10 174);
   --chart-3:        oklch(0.65 0.16 45);
   --chart-4:        oklch(0.54 0.18 25);
   --chart-5:        oklch(0.60 0.14 290);
   --radius:         0.5rem;
   --sidebar:        oklch(1 0 0);
-  --sidebar-foreground: oklch(0.28 0.01 255);
-  --sidebar-primary: oklch(0.32 0.02 255);
+  --sidebar-foreground: oklch(0.20 0 0);
+  --sidebar-primary: oklch(0.08 0 0);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.96 0.004 255);
-  --sidebar-accent-foreground: oklch(0.14 0.01 255);
-  --sidebar-border: oklch(0.91 0.005 255);
-  --sidebar-ring:   oklch(0.32 0.02 255);
+  --sidebar-accent: oklch(0.96 0 0);
+  --sidebar-accent-foreground: oklch(0.08 0 0);
+  --sidebar-border: oklch(0.91 0 0);
+  --sidebar-ring:   #F9A91F;
 }
 
 @layer base {
@@ -94,9 +98,9 @@
     font-size: 14px;
   }
   h1, h2, h3 {
-    font-family: 'Calistoga', serif;
+    font-family: 'Cinzel', serif;
     font-weight: 400;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
   }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }

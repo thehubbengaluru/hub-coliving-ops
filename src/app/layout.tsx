@@ -3,8 +3,8 @@ import "./globals.css"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 export const metadata: Metadata = {
-  title: "Hub Ops — Co-Living Operations",
-  description: "Hub Ops internal property operations platform",
+  title: "The Hub Co-Living — Live more. Stress less.",
+  description: "Fully furnished co-living spaces in Bengaluru. Flexible stays, all-inclusive amenities, vibrant community.",
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

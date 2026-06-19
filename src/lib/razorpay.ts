@@ -57,12 +57,70 @@ export async function createDepositLink({
   return link as RazorpayLink
 }
 
+// Returns pro-rated rent details for a mid-month check-in, or null if checking in on the 1st.
+export function calcProRatedRent(checkInDateStr: string, monthlyRate: number): {
+  amount: number
+  daysInMonth: number
+  daysRemaining: number
+  monthName: string
+  description: string
+} | null {
+  const date = new Date(checkInDateStr + "T00:00:00")
+  const day = date.getDate()
+  if (day === 1) return null
+  const year = date.getFullYear()
+  const month = date.getMonth()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const daysRemaining = daysInMonth - day + 1
+  const amount = Math.round((monthlyRate / daysInMonth) * daysRemaining)
+  const monthName = date.toLocaleString("en-IN", { month: "long" })
+  return {
+    amount,
+    daysInMonth,
+    daysRemaining,
+    monthName,
+    description: `Pro-rated rent — ${monthName} (${day}th–${daysInMonth}th, ${daysRemaining} days @ ₹${monthlyRate.toLocaleString("en-IN")}/mo)`,
+  }
+}
+
+export async function createProRatedLink({
+  property,
+  guestName,
+  email,
+  phone,
+  amount,
+  description,
+  notionPageId,
+}: {
+  property: Property
+  guestName: string
+  email: string
+  phone: string
+  amount: number
+  description: string
+  notionPageId?: string
+}): Promise<RazorpayLink> {
+  const rzp = getClient(property)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const link = await (rzp.paymentLink as any).create({
+    amount: Math.round(amount * 100),
+    currency: "INR",
+    description,
+    customer: { name: guestName, email, contact: phone },
+    notify: { sms: true, email: true },
+    reminder_enable: true,
+    notes: { property, type: "pro_rated_rent", guest_name: guestName, notion_page_id: notionPageId ?? "" },
+  })
+  return link as RazorpayLink
+}
+
 export async function createRentSubscription({
   property,
   guestName,
   email,
   phone,
   monthlyRate,
+  checkInDate,
   zohoInvoiceId,
 }: {
   property: Property
@@ -70,14 +128,15 @@ export async function createRentSubscription({
   email: string
   phone: string
   monthlyRate: number
+  checkInDate?: string  // ISO date string; subscription starts 1st of month after this
   zohoInvoiceId?: string
 }): Promise<RazorpaySubscription> {
   const rzp = getClient(property)
   const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
 
-  // Billing starts on the 1st of next month
-  const now = new Date()
-  const startAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+  // Subscription starts 1st of month after check-in (or next month from now if not provided)
+  const base = checkInDate ? new Date(checkInDate + "T00:00:00") : new Date()
+  const startAt = new Date(base.getFullYear(), base.getMonth() + 1, 1)
   const startAtUnix = Math.floor(startAt.getTime() / 1000)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,5 +176,19 @@ export async function createRentSubscription({
 
 export function verifyWebhookSignature(rawBody: string, signature: string, secret: string): boolean {
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex")
+  return expected === signature
+}
+
+export function getRzpInstance(property: "safina-plaza" | "peepal-tree") {
+  return getClient(property)
+}
+
+export function getPublicKey(property: "safina-plaza" | "peepal-tree"): string {
+  return property === "safina-plaza" ? process.env.RZP_KEY_ID_PLAZA! : process.env.RZP_KEY_ID_PEEPAL!
+}
+
+export function verifyPaymentSignature(orderId: string, paymentId: string, signature: string, property: "safina-plaza" | "peepal-tree"): boolean {
+  const secret = property === "safina-plaza" ? process.env.RZP_KEY_SECRET_PLAZA! : process.env.RZP_KEY_SECRET_PEEPAL!
+  const expected = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex")
   return expected === signature
 }

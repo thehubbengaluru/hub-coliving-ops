@@ -17,7 +17,7 @@ import { usePropertyScope } from "@/lib/property-context"
 const statusConfig: Record<BedStatus, { label: string; dot: string; bg: string; border: string; text: string; badge: string }> = {
   occupied: { label: "Occupied",  dot: "bg-emerald-500", bg: "bg-emerald-50",  border: "border-emerald-200", text: "text-emerald-700", badge: "bg-emerald-100 text-emerald-700 border-emerald-200" },
   vacant:   { label: "Vacant",    dot: "bg-orange-400",  bg: "bg-orange-50",   border: "border-orange-200",  text: "text-orange-700", badge: "bg-orange-100 text-orange-700 border-orange-200" },
-  incoming: { label: "Incoming",  dot: "bg-amber-400",   bg: "bg-amber-50",    border: "border-amber-200",   text: "text-amber-700",  badge: "bg-amber-100 text-amber-700 border-amber-200" },
+  incoming: { label: "Incoming Booking", dot: "bg-amber-400", bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-700", badge: "bg-amber-100 text-amber-700 border-amber-200" },
   blocked:  { label: "Blocked",   dot: "bg-red-400",     bg: "bg-red-50",      border: "border-red-200",     text: "text-red-600",    badge: "bg-red-100 text-red-600 border-red-200" },
   special:  { label: "Special",   dot: "bg-blue-400",    bg: "bg-blue-50",     border: "border-blue-200",    text: "text-blue-700",   badge: "bg-blue-100 text-blue-700 border-blue-200" },
 }
