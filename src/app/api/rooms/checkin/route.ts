@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { checkInGuest } from "@/lib/notion"
+import { checkInGuest, BedOccupiedError } from "@/lib/notion"
 import { createDepositLink, createRentSubscription } from "@/lib/razorpay"
 import { createRentInvoice, sendInvoice, createDepositReceipt, zohoEnabled } from "@/lib/zoho"
 import type { Property } from "@/lib/types"
@@ -97,6 +97,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ...results })
   } catch (err) {
     console.error("[api/rooms/checkin]", err)
+    if (err instanceof BedOccupiedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 })
+    }
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 })
   }
 }

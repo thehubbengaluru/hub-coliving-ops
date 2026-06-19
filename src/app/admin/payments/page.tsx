@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -24,6 +23,7 @@ type GuestRow = {
   monthlyRate: number
   depositPaid: boolean | undefined
   status: "occupied" | "incoming" | "special"
+  subscriptionId?: string
   bed: Bed
 }
 
@@ -42,6 +42,7 @@ function buildGuestRows(rooms: Room[]): GuestRow[] {
         monthlyRate: room.monthlyRate,
         depositPaid: bed.depositPaid,
         status: bed.status as "occupied" | "incoming" | "special",
+        subscriptionId: bed.subscriptionId,
         bed,
       })
     }
@@ -49,29 +50,32 @@ function buildGuestRows(rooms: Room[]): GuestRow[] {
   return rows
 }
 
-type ActionState = "idle" | "loading" | "done" | "error"
-
-interface LinkResult {
-  url: string
-  type: "deposit" | "subscription"
+// Current calendar month label e.g. "June 2026"
+function currentMonthLabel() {
+  return new Date().toLocaleDateString("en-IN", { month: "long", year: "numeric" })
 }
 
-function GuestCard({
-  row,
-  tab,
-}: {
-  row: GuestRow
-  tab: "deposits" | "subscriptions"
-}) {
-  const [depositState, setDepositState] = useState<ActionState>("idle")
-  const [subState, setSubState] = useState<ActionState>("idle")
-  const [linkResult, setLinkResult] = useState<LinkResult | null>(null)
-  const [errorMsg, setErrorMsg] = useState("")
-  const [customAmount, setCustomAmount] = useState(String(row.monthlyRate))
+type ActionState = "idle" | "loading" | "done" | "error"
+
+function GuestCard({ row }: { row: GuestRow }) {
+  const [depositState, setDepositState]   = useState<ActionState>("idle")
+  const [subState, setSubState]           = useState<ActionState>("idle")
+  const [rentState, setRentState]         = useState<ActionState>("idle")
+  const [depositLink, setDepositLink]     = useState<string | null>(null)
+  const [rentLink, setRentLink]           = useState<string | null>(null)
+  const [subLink, setSubLink]             = useState<string | null>(null)
+  const [errorMsg, setErrorMsg]           = useState("")
+  const [customAmount, setCustomAmount]   = useState(String(row.monthlyRate))
+  const [createdSubId, setCreatedSubId]   = useState<string | null>(null)
+
+  const existingSubId    = row.subscriptionId ?? createdSubId
+  const rzpDashboardUrl  = existingSubId ? `https://dashboard.razorpay.com/app/subscriptions/${existingSubId}` : null
+  const propertyLabel    = row.property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
+  const entityLabel      = row.entity === "feazzo" ? "Feazzo" : "SV"
+  const avatarChar       = row.guestName.charAt(0).toUpperCase()
 
   const sendDepositLink = useCallback(async () => {
-    setDepositState("loading")
-    setErrorMsg("")
+    setDepositState("loading"); setErrorMsg("")
     try {
       const res = await fetch("/api/razorpay/payment-link", {
         method: "POST",
@@ -85,7 +89,7 @@ function GuestCard({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed")
-      setLinkResult({ url: data.url, type: "deposit" })
+      setDepositLink(data.url)
       setDepositState("done")
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Error")
@@ -93,9 +97,32 @@ function GuestCard({
     }
   }, [row, customAmount])
 
+  const sendRentLink = useCallback(async () => {
+    setRentState("loading"); setErrorMsg("")
+    try {
+      const res = await fetch("/api/razorpay/payment-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notionPageId: row.notionPageId,
+          property: row.property,
+          amount: Number(customAmount),
+          guestName: row.guestName,
+          type: "rent",
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Failed")
+      setRentLink(data.url)
+      setRentState("done")
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Error")
+      setRentState("error")
+    }
+  }, [row, customAmount])
+
   const createSubscription = useCallback(async () => {
-    setSubState("loading")
-    setErrorMsg("")
+    setSubState("loading"); setErrorMsg("")
     try {
       const res = await fetch("/api/razorpay/subscription", {
         method: "POST",
@@ -109,7 +136,8 @@ function GuestCard({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed")
-      setLinkResult({ url: data.url, type: "subscription" })
+      setCreatedSubId(data.id ?? null)
+      setSubLink(data.url)
       setSubState("done")
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Error")
@@ -117,15 +145,13 @@ function GuestCard({
     }
   }, [row, customAmount])
 
-  const propertyLabel = row.property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
-  const entityLabel   = row.entity === "feazzo" ? "Feazzo" : "SV"
-  const avatarChar    = row.guestName.charAt(0).toUpperCase()
-
   return (
     <>
       <Card className="bg-card border-border shadow-none hover:border-slate-300 transition-all duration-150">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3 mb-3">
+        <CardContent className="p-4 space-y-3.5">
+
+          {/* Header */}
+          <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-sm font-semibold text-slate-700 shrink-0">
               {avatarChar}
             </div>
@@ -133,137 +159,180 @@ function GuestCard({
               <p className="text-[13px] font-medium text-foreground truncate">{row.guestName}</p>
               <p className="text-[11px] text-muted-foreground">{propertyLabel} · Rm {row.room}</p>
             </div>
-            <span className="text-[10px] text-muted-foreground">{entityLabel}</span>
+            <span className="text-[10px] text-muted-foreground shrink-0">{entityLabel}</span>
           </div>
 
-          {tab === "deposits" && (
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Deposit amount</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-muted-foreground">₹</span>
-                  <Input
-                    value={customAmount}
-                    onChange={e => setCustomAmount(e.target.value)}
-                    className="w-24 h-6 text-xs text-right px-1.5 tabular-nums"
-                  />
-                </div>
-              </div>
+          {/* Rate row */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Monthly tariff</span>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-muted-foreground">₹</span>
+              <Input
+                value={customAmount}
+                onChange={e => setCustomAmount(e.target.value)}
+                className="w-20 h-6 text-xs text-right px-1.5 tabular-nums"
+              />
+            </div>
+          </div>
 
+          <div className="border-t border-border pt-3 space-y-3">
+
+            {/* Security deposit */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Security deposit</p>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Status</span>
+                <span className="text-xs text-muted-foreground">₹{Number(customAmount).toLocaleString("en-IN")}</span>
                 {row.depositPaid === true ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
-                    <CheckCircle2 className="w-3 h-3" /> Paid
+                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Collected
                   </span>
                 ) : row.depositPaid === false ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 font-medium">
-                    <Clock className="w-3 h-3" /> Pending
+                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 font-medium">
+                    <Clock className="w-3.5 h-3.5" /> Pending
                   </span>
                 ) : (
-                  <span className="text-[10px] text-muted-foreground">—</span>
+                  <span className="text-[11px] text-muted-foreground">—</span>
                 )}
               </div>
-
-              {depositState === "done" && linkResult ? (
-                <a
-                  href={linkResult.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center gap-1.5 w-full h-7 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700 font-medium hover:bg-emerald-100 transition-colors"
-                >
-                  <ExternalLink className="w-3 h-3" /> Open payment link
-                </a>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full h-7 text-[11px] gap-1.5"
-                  disabled={depositState === "loading"}
-                  onClick={sendDepositLink}
-                >
-                  {depositState === "loading"
-                    ? <><RefreshCw className="w-3 h-3 animate-spin" /> Generating…</>
-                    : <><Link2 className="w-3 h-3" /> Send Deposit Link</>}
-                </Button>
-              )}
-              {depositState === "error" && (
-                <p className="text-[10px] text-red-500">{errorMsg}</p>
+              {row.depositPaid !== true && (
+                depositState === "done" && depositLink ? (
+                  <a
+                    href={depositLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-center gap-1.5 w-full h-7 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700 font-medium hover:bg-emerald-100 transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" /> Open deposit link
+                  </a>
+                ) : (
+                  <Button
+                    size="sm" variant="outline"
+                    className="w-full h-7 text-[11px] gap-1.5"
+                    disabled={depositState === "loading"}
+                    onClick={sendDepositLink}
+                  >
+                    {depositState === "loading"
+                      ? <><RefreshCw className="w-3 h-3 animate-spin" /> Generating…</>
+                      : <><Link2 className="w-3 h-3" /> Send Deposit Link</>}
+                  </Button>
+                )
               )}
             </div>
-          )}
 
-          {tab === "subscriptions" && (
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Monthly rent</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-muted-foreground">₹</span>
-                  <Input
-                    value={customAmount}
-                    onChange={e => setCustomAmount(e.target.value)}
-                    className="w-24 h-6 text-xs text-right px-1.5 tabular-nums"
-                  />
+            {/* Monthly tariff — current month */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                {currentMonthLabel()} rent
+              </p>
+              {existingSubId ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Mandate active
+                    </span>
+                    {rzpDashboardUrl && (
+                      <a href={rzpDashboardUrl} target="_blank" rel="noreferrer"
+                        className="text-[10px] text-muted-foreground underline flex items-center gap-0.5 hover:text-foreground">
+                        Razorpay <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </div>
+                  {/* Backup one-off payment link */}
+                  {rentState === "done" && rentLink ? (
+                    <a
+                      href={rentLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center justify-center gap-1.5 w-full h-7 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700 font-medium hover:bg-emerald-100 transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Open payment link
+                    </a>
+                  ) : (
+                    <Button
+                      size="sm" variant="outline"
+                      className="w-full h-7 text-[11px] gap-1.5 text-muted-foreground"
+                      disabled={rentState === "loading"}
+                      onClick={sendRentLink}
+                    >
+                      {rentState === "loading"
+                        ? <><RefreshCw className="w-3 h-3 animate-spin" /> Generating…</>
+                        : <><Link2 className="w-3 h-3" /> Generate one-off payment link</>}
+                    </Button>
+                  )}
                 </div>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Billing</span>
-                <span className="text-[10px] text-muted-foreground">1st of every month</span>
-              </div>
-
-              {subState === "done" && linkResult ? (
-                <a
-                  href={linkResult.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center gap-1.5 w-full h-7 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700 font-medium hover:bg-emerald-100 transition-colors"
-                >
-                  <ExternalLink className="w-3 h-3" /> View mandate link
-                </a>
               ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full h-7 text-[11px] gap-1.5"
-                  disabled={subState === "loading"}
-                  onClick={createSubscription}
-                >
-                  {subState === "loading"
-                    ? <><RefreshCw className="w-3 h-3 animate-spin" /> Creating…</>
-                    : <><CreditCard className="w-3 h-3" /> Create Subscription</>}
-                </Button>
-              )}
-              {subState === "error" && (
-                <p className="text-[10px] text-red-500">{errorMsg}</p>
+                <div className="space-y-1.5">
+                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 font-medium">
+                    <Clock className="w-3.5 h-3.5" /> No mandate set up
+                  </span>
+                  <div className="flex gap-1.5">
+                    {subState === "done" && subLink ? (
+                      <a
+                        href={subLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-center gap-1.5 flex-1 h-7 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700 font-medium hover:bg-emerald-100 transition-colors"
+                      >
+                        <ExternalLink className="w-3 h-3" /> Open mandate link
+                      </a>
+                    ) : (
+                      <Button
+                        size="sm" variant="outline"
+                        className="flex-1 h-7 text-[11px] gap-1"
+                        disabled={subState === "loading"}
+                        onClick={createSubscription}
+                      >
+                        {subState === "loading"
+                          ? <><RefreshCw className="w-3 h-3 animate-spin" /> Creating…</>
+                          : <><CreditCard className="w-3 h-3" /> Create mandate</>}
+                      </Button>
+                    )}
+                    {rentState === "done" && rentLink ? (
+                      <a
+                        href={rentLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-center gap-1.5 flex-1 h-7 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700 font-medium hover:bg-emerald-100 transition-colors"
+                      >
+                        <ExternalLink className="w-3 h-3" /> Payment link
+                      </a>
+                    ) : (
+                      <Button
+                        size="sm" variant="outline"
+                        className="flex-1 h-7 text-[11px] gap-1"
+                        disabled={rentState === "loading"}
+                        onClick={sendRentLink}
+                      >
+                        {rentState === "loading"
+                          ? <><RefreshCw className="w-3 h-3 animate-spin" /> …</>
+                          : <><Link2 className="w-3 h-3" /> One-off link</>}
+                      </Button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-          )}
+          </div>
+
+          {errorMsg && <p className="text-[10px] text-red-500">{errorMsg}</p>}
         </CardContent>
       </Card>
 
-      {/* Link result dialog */}
-      <Dialog open={!!linkResult && (tab === "deposits" ? depositState === "done" : subState === "done")} onOpenChange={() => { setLinkResult(null); setDepositState("idle"); setSubState("idle") }}>
+      {/* Subscription created dialog */}
+      <Dialog open={subState === "done" && !!subLink} onOpenChange={() => { setSubLink(null); setSubState("idle") }}>
         <DialogContent className="max-w-sm bg-card border-border shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-sm flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              {linkResult?.type === "deposit" ? "Deposit link sent" : "Subscription created"}
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Subscription created
             </DialogTitle>
             <DialogDescription className="text-xs">
-              {linkResult?.type === "deposit"
-                ? `SMS + email sent to ${row.guestName} via Razorpay.`
-                : `Mandate link sent to ${row.guestName}. Billing starts 1st of next month.`}
+              Mandate link sent to {row.guestName}. Auto-debit starts 1st of next month.
             </DialogDescription>
           </DialogHeader>
-          {linkResult && (
-            <a
-              href={linkResult.url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-center gap-1.5 h-8 rounded-md border border-border bg-muted text-[11px] text-foreground font-medium hover:bg-muted/80 transition-colors"
-            >
-              <ExternalLink className="w-3 h-3" /> {linkResult.url}
+          {subLink && (
+            <a href={subLink} target="_blank" rel="noreferrer"
+              className="flex items-center justify-center gap-1.5 h-8 rounded-md border border-border bg-muted text-[11px] text-foreground font-medium hover:bg-muted/80 transition-colors">
+              <ExternalLink className="w-3 h-3" /> {subLink}
             </a>
           )}
         </DialogContent>
@@ -273,10 +342,9 @@ function GuestCard({
 }
 
 export default function PaymentsPage() {
-  const [rooms, setRooms] = useState<Room[]>([])
+  const [rooms, setRooms]     = useState<Room[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState("")
-  const [tab, setTab] = useState<"deposits" | "subscriptions">("deposits")
+  const [search, setSearch]   = useState("")
 
   const { scope } = usePropertyScope()
 
@@ -287,21 +355,20 @@ export default function PaymentsPage() {
       .catch(() => setLoading(false))
   }, [])
 
-  const allGuests = buildGuestRows(rooms)
+  const allGuests    = buildGuestRows(rooms)
   const scopedGuests = scope !== "all" ? allGuests.filter(g => g.property === scope) : allGuests
-  const filtered = scopedGuests.filter(g =>
-    g.guestName.toLowerCase().includes(search.toLowerCase()) ||
-    g.room.includes(search)
+  const filtered     = scopedGuests.filter(g =>
+    g.guestName.toLowerCase().includes(search.toLowerCase()) || g.room.includes(search)
   )
 
   const depositPendingCount = scopedGuests.filter(g => !g.depositPaid).length
-  const totalRent = scopedGuests.reduce((s, g) => s + g.monthlyRate, 0)
+  const noMandateCount      = scopedGuests.filter(g => !g.subscriptionId).length
+  const totalRent           = scopedGuests.reduce((s, g) => s + g.monthlyRate, 0)
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-48 text-muted-foreground text-sm gap-2">
-        <RefreshCw className="w-4 h-4 animate-spin" />
-        Loading from Notion…
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading from Notion…
       </div>
     )
   }
@@ -320,53 +387,29 @@ export default function PaymentsPage() {
             {depositPendingCount} deposits pending
           </div>
         )}
+        {noMandateCount > 0 && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium bg-orange-100 text-orange-700 border-orange-200">
+            <CreditCard className="w-3 h-3" />
+            {noMandateCount} no mandate
+          </div>
+        )}
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium bg-slate-100 text-slate-700 border-slate-200">
-          <CreditCard className="w-3 h-3" />
           ₹{(totalRent / 1000).toFixed(0)}k/mo gross rent
         </div>
       </div>
 
-      {/* Tab + search */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex bg-muted rounded-md p-0.5">
-          <button
-            onClick={() => setTab("deposits")}
-            className={`px-3 py-1 rounded-[5px] text-xs font-medium transition-all duration-150 cursor-pointer ${
-              tab === "deposits" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Security Deposits
-          </button>
-          <button
-            onClick={() => setTab("subscriptions")}
-            className={`px-3 py-1 rounded-[5px] text-xs font-medium transition-all duration-150 cursor-pointer ${
-              tab === "subscriptions" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Monthly Subscriptions
-          </button>
-        </div>
+      {/* Search */}
+      <div className="flex items-center gap-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search guest…" className="pl-8 h-8 text-xs w-52" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search guest…" className="pl-8 h-8 text-xs w-56" />
         </div>
         <span className="text-xs text-muted-foreground ml-auto">{filtered.length} guests</span>
       </div>
 
-      {tab === "deposits" && (
-        <p className="text-xs text-muted-foreground">
-          Generates a Razorpay Payment Link and sends it to the guest via SMS + email. Amount pre-filled from Notion tariff — edit before sending if needed.
-        </p>
-      )}
-      {tab === "subscriptions" && (
-        <p className="text-xs text-muted-foreground">
-          Creates a Razorpay plan + subscription mandate. Guest receives the auto-debit authorization link. Billing starts on the 1st of next month.
-        </p>
-      )}
-
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {filtered.map(row => (
-          <GuestCard key={`${row.notionPageId}-${tab}`} row={row} tab={tab} />
+          <GuestCard key={row.notionPageId} row={row} />
         ))}
       </div>
 
@@ -375,15 +418,6 @@ export default function PaymentsPage() {
           {search ? `No guests matching "${search}"` : "No active guests"}
         </div>
       )}
-
-      <div className="mt-4 p-3 rounded-lg border border-amber-200 bg-amber-50">
-        <p className="text-[11px] text-amber-700 font-medium mb-0.5">Webhook setup needed for real-time payment confirmation</p>
-        <p className="text-[10px] text-amber-600">
-          Go to Razorpay Dashboard → Settings → Webhooks → Add endpoint: <code className="font-mono">https://yourdomain.com/api/razorpay/webhook</code>.
-          Copy the webhook secret into <code className="font-mono">RZP_WEBHOOK_SECRET_PLAZA</code> / <code className="font-mono">RZP_WEBHOOK_SECRET_PEEPAL</code> in .env.local.
-          For local testing use ngrok: <code className="font-mono">ngrok http 3001</code>.
-        </p>
-      </div>
     </div>
   )
 }

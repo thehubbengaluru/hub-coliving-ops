@@ -167,6 +167,23 @@ export async function sendInvoice(property: Property, invoiceId: string): Promis
   })
 }
 
+// ─── Tag an invoice to a guest ────────────────────────────────────────────
+// Associates an invoice with a guest by writing the guest reference into the
+// invoice's reference_number, so billing can be filtered/grouped per guest.
+export async function tagInvoiceToGuest({
+  property, invoiceId, guestName, guestEmail,
+}: {
+  property:   Property
+  invoiceId:  string
+  guestName:  string
+  guestEmail?: string
+}): Promise<void> {
+  const ref = guestEmail ? `${guestName} <${guestEmail}>` : guestName
+  await zohoFetch("PUT", `/invoices/${invoiceId}`, property, {
+    reference_number: ref,
+  })
+}
+
 // ─── Mark invoice paid ────────────────────────────────────────────────────
 
 export async function markInvoicePaid({

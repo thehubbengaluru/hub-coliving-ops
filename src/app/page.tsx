@@ -6,7 +6,7 @@ import {
   MapPin, Phone, ChevronDown, ChevronUp, ArrowRight,
   Building2, X, CheckCircle2, Loader2, Wifi, Home,
   Clock, Zap, Droplets, ShieldCheck, Sofa, Users, Star,
-  Menu,
+  Menu, Camera,
 } from "lucide-react"
 import { formatAvailableFrom, getRoomLabel, type BedListing } from "@/lib/inventory"
 
@@ -1151,6 +1151,15 @@ export default function LandingPage() {
               >
                 <Phone className="w-3.5 h-3.5" /> +91 91139 92047
               </a>
+              <a
+                href="https://www.instagram.com/thehubbengaluru/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-[13px] mt-3 transition-colors hover:text-white/70"
+                style={{ color: "rgba(255,255,255,0.50)" }}
+              >
+                <Camera className="w-3.5 h-3.5" /> @thehubbengaluru
+              </a>
             </div>
 
             {/* Quick links */}
@@ -1223,6 +1232,12 @@ export default function LandingPage() {
                 className="hover:text-white/60 transition-colors"
               >
                 House Rules
+              </a>
+              <a
+                href="/legal"
+                className="hover:text-white/60 transition-colors"
+              >
+                Legal
               </a>
             </div>
           </div>

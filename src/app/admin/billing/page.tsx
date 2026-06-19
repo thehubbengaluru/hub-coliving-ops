@@ -50,7 +50,7 @@ function fmt(n: number) {
 
 // ─── Invoice row ─────────────────────────────────────────────────────────
 
-function InvoiceRow({ inv, onResend }: { inv: ZohoInvoiceListItem; onResend: (id: string) => void }) {
+function InvoiceRow({ inv, onResend, onTag }: { inv: ZohoInvoiceListItem; onResend: (id: string) => void; onTag: (id: string) => void }) {
   const paid = inv.status === "paid" || inv.balance === 0
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-border last:border-0 last:pb-0 first:pt-0">
@@ -83,6 +83,9 @@ function InvoiceRow({ inv, onResend }: { inv: ZohoInvoiceListItem; onResend: (id
           </Button>
         )}
         {paid && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+        <Button size="sm" variant="outline" className="h-5 text-[10px] px-1.5" onClick={() => onTag(inv.invoice_id)}>
+          Tag guest
+        </Button>
         {inv.invoice_url && (
           <a href={inv.invoice_url} target="_blank" rel="noreferrer">
             <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" />
@@ -95,7 +98,7 @@ function InvoiceRow({ inv, onResend }: { inv: ZohoInvoiceListItem; onResend: (id
 
 // ─── Entity card ─────────────────────────────────────────────────────────
 
-function EntityCard({ entity, onResend }: { entity: Entity; onResend: (property: "safina-plaza" | "peepal-tree", invoiceId: string) => void }) {
+function EntityCard({ entity, onResend, onTag }: { entity: Entity; onResend: (property: "safina-plaza" | "peepal-tree", invoiceId: string) => void; onTag: (property: "safina-plaza" | "peepal-tree", invoiceId: string) => void }) {
   const property = entity.key === "plaza" ? "safina-plaza" : "peepal-tree"
   const paid     = entity.invoices.filter(i => i.status === "paid" || i.balance === 0)
   const overdue  = entity.invoices.filter(i => i.status === "overdue")
@@ -141,7 +144,7 @@ function EntityCard({ entity, onResend }: { entity: Entity; onResend: (property:
         ) : (
           <div className="divide-y divide-border">
             {entity.invoices.map(inv => (
-              <InvoiceRow key={inv.invoice_id} inv={inv} onResend={(id) => onResend(property, id)} />
+              <InvoiceRow key={inv.invoice_id} inv={inv} onResend={(id) => onResend(property, id)} onTag={(id) => onTag(property, id)} />
             ))}
           </div>
         )}
@@ -213,6 +216,23 @@ export default function BillingPage() {
     } finally {
       setSending(null)
       fetchData()
+    }
+  }
+
+  async function handleTag(property: "safina-plaza" | "peepal-tree", invoiceId: string) {
+    const guestName = window.prompt("Tag this invoice to which guest? (name)")
+    if (!guestName?.trim()) return
+    const guestEmail = window.prompt("Guest email (optional)") ?? ""
+    try {
+      const res = await fetch("/api/billing/tag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ property, invoiceId, guestName: guestName.trim(), guestEmail: guestEmail.trim() }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Failed") }
+      fetchData()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed to tag invoice")
     }
   }
 
@@ -295,6 +315,7 @@ export default function BillingPage() {
             key={entity.key}
             entity={entity}
             onResend={handleResend}
+            onTag={handleTag}
           />
         ))}
       </div>

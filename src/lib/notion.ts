@@ -1,6 +1,7 @@
 import { Client, isFullPage } from "@notionhq/client"
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
 import type { Room, Bed, BedStatus, Floor, Gender } from "./types"
+import { normalizeRoomTier, rateForTier, tierFromRate } from "./pricing"
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN })
 
@@ -25,6 +26,9 @@ function getSelect(page: PageObjectResponse, prop: string): string | null {
 function getNumber(page: PageObjectResponse, prop: string): number | null {
   const p = page.properties[prop]
   if (p?.type === "number") return p.number ?? null
+  // "Default tariff by room type" style fields are usually a formula or rollup.
+  if (p?.type === "formula" && p.formula.type === "number") return p.formula.number ?? null
+  if (p?.type === "rollup"  && p.rollup.type  === "number") return p.rollup.number ?? null
   return null
 }
 
@@ -43,6 +47,21 @@ function getDate(page: PageObjectResponse, prop: string): string | null {
 function getRichText(page: PageObjectResponse, prop: string): string | null {
   const p = page.properties[prop]
   if (p?.type === "rich_text") return p.rich_text.map(t => t.plain_text).join("").trim() || null
+  return null
+}
+
+function getMultiSelect(page: PageObjectResponse, prop: string): string[] {
+  const p = page.properties[prop]
+  if (p?.type === "multi_select") return p.multi_select.map(o => o.name)
+  return []
+}
+
+// "Room Type" is a single-select in the member DBs (e.g. "Deluxe Sharing"), but
+// tolerate multi_select too so this keeps working if the schema changes.
+function getRoomTypeName(page: PageObjectResponse): string | null {
+  const p = page.properties["Room Type"]
+  if (p?.type === "select")       return p.select?.name ?? null
+  if (p?.type === "multi_select") return p.multi_select[0]?.name ?? null
   return null
 }
 
@@ -110,6 +129,13 @@ async function queryAll(dataSourceId: string): Promise<PageObjectResponse[]> {
   return results
 }
 
+// Surface the occupant's gender as a leading tag (e.g. "Male" / "Female"),
+// but only for beds that actually hold a guest.
+function genderTag(gender: string | null | undefined, hasGuest: boolean): string[] {
+  if (!gender || !hasGuest) return []
+  return [gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase()]
+}
+
 // ─── Plaza bed transformer ─────────────────────────────────────────────────
 // Plaza has no Status field — vacancy is encoded in Member Name
 
@@ -146,6 +172,9 @@ function plazaBed(page: PageObjectResponse, bed: BedLabel): Bed {
     checkOut:  checkOut ?? undefined,
     genderRestriction: (gender?.toLowerCase() as Gender) ?? "male",
     tier: checkOut ? "monthly" : "open-ended",
+    subscriptionId: getRichText(page, "Razorpay Subscription ID") ?? undefined,
+    roomTier: normalizeRoomTier(getRoomTypeName(page)) ?? undefined,
+    tags: [...genderTag(gender, !isVacant && status !== "blocked"), ...getMultiSelect(page, "Tags"), ...getMultiSelect(page, "Type")],
   }
 }
 
@@ -194,6 +223,9 @@ function peepalBed(page: PageObjectResponse, bed: BedLabel): Bed {
     checkOut:  checkOut ?? undefined,
     genderRestriction: (gender?.toLowerCase() as Gender) ?? "male",
     tier: checkOut ? "monthly" : "open-ended",
+    subscriptionId: getRichText(page, "Razorpay Subscription ID") ?? undefined,
+    roomTier: normalizeRoomTier(getRoomTypeName(page)) ?? undefined,
+    tags: [...genderTag(gender, !isVacant && status !== "blocked"), ...getMultiSelect(page, "Tags"), ...getMultiSelect(page, "Type")],
   }
 }
 
@@ -237,9 +269,18 @@ function groupRooms(
     } else if (tariffField) {
       monthlyRate = getNumber(entries[0].page, tariffField) ?? 0
     } else if (depositField) {
-      // Plaza: use deposit amount of first occupied bed as proxy (deposit = 1 month rate)
+      // Plaza: deposit = 1 month rate. Prefer occupied bed (field is filled on booking),
+      // fall back to Monthly Rent / Tariff which may be pre-filled on vacant private rooms.
       const occupied = entries.find(e => !getTitle(e.page, "Member Name").startsWith("Vacant"))
-      monthlyRate = getNumber((occupied ?? entries[0]).page, depositField) ?? 0
+      const target   = occupied ?? entries[0]
+      monthlyRate =
+        getNumber(target.page, depositField) ??
+        getNumber(target.page, "Monthly Rent") ??
+        getNumber(target.page, "Tariff") ??
+        // last resort: check all entries
+        entries.reduce<number | null>((found, e) =>
+          found ?? getNumber(e.page, depositField) ?? getNumber(e.page, "Monthly Rent") ?? getNumber(e.page, "Tariff"), null
+        ) ?? 0
     }
 
     const blocked = beds.some(b => b.status === "blocked")
@@ -248,12 +289,35 @@ function groupRooms(
       return name.includes("airbnb")
     })
 
+    // Canonical room tier from the Notion "Room Type" tag — prefer an occupied
+    // bed (its tag reflects the booked tier), else any bed that carries one.
+    let roomTier =
+      beds.find(b => b.guestName && b.roomTier)?.roomTier ??
+      beds.find(b => b.roomTier)?.roomTier
+
+    // When Notion has no booked rate yet (e.g. a vacant room), fall back to the
+    // per-room-type default tariff configured on the page, then to the code-side
+    // tier map — so pricing always reflects the room type instead of "TBD".
+    if (monthlyRate === 0) {
+      monthlyRate =
+        entries.map(e => getNumber(e.page, "Room Type Default Tariff Incl GST")).find(v => v && v > 0) ?? 0
+    }
+    if (monthlyRate === 0 && roomTier) {
+      monthlyRate = rateForTier(property, roomTier)
+    }
+    // If the tag was missing but we have a rate, recover the tier from it so the
+    // room is still recognised as a fixed tier (no manual tier selection).
+    if (!roomTier && monthlyRate > 0) {
+      roomTier = tierFromRate(property, isSharing ? "sharing" : "private", monthlyRate) ?? undefined
+    }
+
     rooms.push({
       id: `${property}-${base}`,
       number: base,
       property,
       floor,
       type: isSharing ? "sharing" : "private",
+      roomTier,
       entity,
       beds,
       monthlyRate,
@@ -303,6 +367,53 @@ export async function getGuestContact(notionPageId: string): Promise<{ email: st
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Props = Record<string, any>
 
+/**
+ * Thrown when a check-in is attempted on a bed that is still occupied by a
+ * different live guest. Callers should surface this as a 409, never overwrite.
+ */
+export class BedOccupiedError extends Error {
+  constructor(public occupantName: string) {
+    super(
+      `Bed is already occupied by "${occupantName}". Check them out (which archives them to Alumni) before assigning a new guest.`,
+    )
+    this.name = "BedOccupiedError"
+  }
+}
+
+function digits(s: string | null | undefined): string {
+  return (s ?? "").replace(/\D/g, "")
+}
+
+/**
+ * Reads a bed page and refuses if it is currently held by a *different* live
+ * guest. A bed is assignable only when it is Vacant, being serviced, marked
+ * Checked-Out, or already belongs to the same incoming guest. "Same guest" is
+ * matched on email OR phone, so a phone-only room-board invite is still
+ * recognised when the guest later completes the booking form with their email.
+ * This is the single guard that prevents a check-in from silently overwriting —
+ * and thereby destroying — an existing tenant's record.
+ */
+export async function assertBedVacant(notionPageId: string, incomingEmail: string, incomingPhone?: string): Promise<void> {
+  const existing = await notion.pages.retrieve({ page_id: notionPageId }) as PageObjectResponse
+  const existingName   = getTitle(existing, "Member Name")
+  const existingEmail  = getEmail(existing, "Email")
+  const existingPhone  = getPhone(existing, "Phone")
+  const existingStatus = getSelect(existing, "Status") // Peepal only
+
+  const isVacant     = !existingName || existingName.startsWith("Vacant")
+  const isServiced   = existingName.toLowerCase().includes("serviced")
+  const isCheckedOut = existingStatus === "Checked-Out"
+
+  const emailMatch = !!existingEmail && !!incomingEmail &&
+                     existingEmail.trim().toLowerCase() === incomingEmail.trim().toLowerCase()
+  const phoneMatch = !!digits(existingPhone) && !!digits(incomingPhone) &&
+                     digits(existingPhone) === digits(incomingPhone)
+  const sameGuest  = emailMatch || phoneMatch
+
+  const occupiedByOther = !isVacant && !isServiced && !isCheckedOut && !sameGuest
+  if (occupiedByOther) throw new BedOccupiedError(existingName)
+}
+
 export async function checkInGuest({
   notionPageId, property, guestName, gender, phone, email,
   checkInDate, checkOutDate, monthlyRate,
@@ -317,6 +428,9 @@ export async function checkInGuest({
   checkOutDate?: string
   monthlyRate: number
 }) {
+  // Guard: never overwrite a bed still held by a different live guest.
+  await assertBedVacant(notionPageId, email, phone)
+
   const genderLabel = gender === "male" ? "Male" : "Female"
   const props: Props = {
     "Member Name":    { title: [{ text: { content: guestName } }] },
@@ -350,6 +464,11 @@ export async function syncGuestToAlumni({
   roomNumber,
   bedLabel,
   roomType,
+  noticePeriodLastDate,
+  refundDueDate,
+  checkedOutBy,
+  damagesNote,
+  checklistSummary,
 }: {
   notionPageId: string
   property: "safina-plaza" | "peepal-tree"
@@ -357,10 +476,18 @@ export async function syncGuestToAlumni({
   roomNumber?: string
   bedLabel?: string | null
   roomType?: "private" | "sharing"
-}): Promise<void> {
-  // Read the member page before we clear it
+  noticePeriodLastDate?: string | null
+  refundDueDate?: string | null
+  checkedOutBy?: string
+  damagesNote?: string
+  checklistSummary?: string
+}): Promise<string> {
+  // Read the member page before we clear it. If we cannot read it, abort —
+  // the caller must NOT proceed to clear the bed, or the guest is lost.
   const raw = await notion.pages.retrieve({ page_id: notionPageId })
-  if (!isFullPage(raw)) return
+  if (!isFullPage(raw)) {
+    throw new Error(`Cannot archive guest to Alumni: member page ${notionPageId} not found or inaccessible. Aborting checkout so the record is not lost.`)
+  }
 
   const name       = getTitle(raw, "Member Name")
   const email      = getEmail(raw, "Email")
@@ -377,6 +504,8 @@ export async function syncGuestToAlumni({
   const address    = getRichText(raw, "Permanent Address")
   const nationality = getRichText(raw, "Nationality")
   const notes      = getRichText(raw, "Notes")
+  // "Room Type" on the member page: Standard/Deluxe × Sharing/Private (single-select).
+  const roomTypeName = getRoomTypeName(raw)
 
   // Compute length of stay
   let lengthOfStay = ""
@@ -415,9 +544,120 @@ export async function syncGuestToAlumni({
   if (lengthOfStay) props["Length Of Stay"]         = { rich_text: [{ text: { content: lengthOfStay } }] }
   if (notes)        props["Notes"]                  = { rich_text: [{ text: { content: notes } }] }
   if (roomLabel)    props["Room"]                   = { select: { name: roomLabel } }
-  if (roomType)     props["Room Type"]              = { select: { name: roomType === "private" ? "Single" : "Double" } }
+  // Copy Room Type from the member page (Standard/Deluxe × Sharing/Private).
+  // Fall back to deriving from roomType param for legacy records without it.
+  if (roomTypeName) {
+    props["Room Type"] = { multi_select: [{ name: roomTypeName }] }
+  } else if (roomType) {
+    const effectiveTariff = depAmount ?? tariff ?? 0
+    const isDeluxe = property === "safina-plaza" && (
+      (roomType === "sharing" && effectiveTariff > 25000) ||
+      (roomType === "private" && effectiveTariff > 50000)
+    )
+    const tier = `${isDeluxe ? "Deluxe" : "Standard"} ${roomType === "private" ? "Private" : "Sharing"}`
+    props["Room Type"] = { multi_select: [{ name: tier }] }
+  }
+  if (noticePeriodLastDate) props["Notice Period Last Date"] = { date: { start: noticePeriodLastDate } }
+  if (refundDueDate)        props["Deposit Refund Due"]      = { date: { start: refundDueDate } }
+  if (checkedOutBy)         props["Checked Out By"]          = { rich_text: [{ text: { content: checkedOutBy } }] }
 
-  await notion.pages.create({ parent: { database_id: DB_ALUMNI }, properties: props })
+  // Checkout/damages checklist captured as page content (schema-safe).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const children: any[] = []
+  if (checklistSummary) {
+    children.push({ object: "block", type: "heading_3", heading_3: { rich_text: [{ type: "text", text: { content: "✅ Check-out Checklist" } }] } })
+    children.push({ object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: checklistSummary } }] } })
+  }
+  if (damagesNote) {
+    children.push({ object: "block", type: "heading_3", heading_3: { rich_text: [{ type: "text", text: { content: "🛠️ Damages" } }] } })
+    children.push({ object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: damagesNote } }] } })
+  }
+
+  // Best-effort: don't fail the archive if a bespoke property is missing.
+  let created
+  try {
+    created = await notion.pages.create({
+      parent: { database_id: DB_ALUMNI },
+      properties: props,
+      ...(children.length ? { children } : {}),
+    })
+  } catch (e) {
+    console.warn("[syncGuestToAlumni] retry without optional props:", e)
+    // Retry with only the core props that are known to exist.
+    delete props["Notice Period Last Date"]
+    delete props["Deposit Refund Due"]
+    delete props["Checked Out By"]
+    created = await notion.pages.create({
+      parent: { database_id: DB_ALUMNI },
+      properties: props,
+      ...(children.length ? { children } : {}),
+    })
+  }
+  return created.id
+}
+
+/**
+ * Make a bed unavailable (Blocked) with reason, duration, and the team member
+ * who blocked it. Refuses to block a bed currently held by a live guest.
+ * Peepal uses the Status field; Plaza encodes "serviced" in Member Name. Block
+ * metadata is appended as page content so we never depend on bespoke properties.
+ */
+export async function blockBed({
+  notionPageId, property, reason, fromDate, untilDate, blockedBy,
+}: {
+  notionPageId: string
+  property: "safina-plaza" | "peepal-tree"
+  reason: string
+  fromDate?: string
+  untilDate?: string
+  blockedBy: string
+}): Promise<void> {
+  const page = await notion.pages.retrieve({ page_id: notionPageId }) as PageObjectResponse
+  if (isFullPage(page)) {
+    const name = getTitle(page, "Member Name")
+    const status = getSelect(page, "Status")
+    const liveGuest = name && !name.startsWith("Vacant") && status !== "Checked-Out" && !name.toLowerCase().includes("serviced")
+    if (liveGuest) {
+      throw new BedOccupiedError(name)
+    }
+  }
+
+  const props: Props = {}
+  if (property === "peepal-tree") {
+    props["Status"] = { select: { name: "Blocked" } }
+    props["Member Name"] = { title: [{ text: { content: "Vacant — blocked" } }] }
+  } else {
+    props["Member Name"] = { title: [{ text: { content: "Vacant — serviced" } }] }
+  }
+  await notion.pages.update({ page_id: notionPageId, properties: props })
+
+  const detail = [
+    `Reason: ${reason}`,
+    fromDate ? `From: ${fromDate}` : null,
+    untilDate ? `Until: ${untilDate}` : null,
+    `Blocked by: ${blockedBy}`,
+  ].filter(Boolean).join("  •  ")
+  await notion.blocks.children.append({
+    block_id: notionPageId,
+    children: [{
+      object: "block",
+      type: "callout",
+      callout: { rich_text: [{ type: "text", text: { content: `🚫 Unavailable — ${detail}` } }], icon: { emoji: "🚫" } },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any],
+  })
+}
+
+/** Reverse blockBed: return a blocked/serviced bed to Vacant. */
+export async function unblockBed({
+  notionPageId, property,
+}: {
+  notionPageId: string
+  property: "safina-plaza" | "peepal-tree"
+}): Promise<void> {
+  const props: Props = { "Member Name": { title: [{ text: { content: "Vacant" } }] } }
+  if (property === "peepal-tree") props["Status"] = { select: { name: "Vacant" } }
+  await notion.pages.update({ page_id: notionPageId, properties: props })
 }
 
 export async function checkOutGuest({
@@ -438,6 +678,60 @@ export async function checkOutGuest({
   await notion.pages.update({ page_id: notionPageId, properties: props })
 }
 
+// Active members with a scheduled check-out date, for extend-stay reminders.
+export type UpcomingCheckout = {
+  notionPageId: string
+  property: "safina-plaza" | "peepal-tree"
+  name: string
+  email: string | null
+  checkOut: string
+  daysUntil: number
+}
+
+export async function getUpcomingCheckouts(): Promise<UpcomingCheckout[]> {
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const out: UpcomingCheckout[] = []
+
+  for (const [property, ds] of [["safina-plaza", DS_PLAZA], ["peepal-tree", DS_PEEPAL]] as const) {
+    const pages = await queryAll(ds)
+    for (const page of pages) {
+      const name = getTitle(page, "Member Name")
+      if (!name || name.startsWith("Vacant")) continue
+      const checkOut = getDate(page, "Check Out Date ")
+      if (!checkOut) continue
+      const co = new Date(checkOut + "T00:00:00")
+      const daysUntil = Math.round((co.getTime() - today.getTime()) / 86_400_000)
+      if (daysUntil < 0) continue
+      out.push({ notionPageId: page.id, property, name, email: getEmail(page, "Email"), checkOut, daysUntil })
+    }
+  }
+  return out
+}
+
+/**
+ * Record a created Razorpay subscription id on the member page so the ops UI can
+ * tell a subscription already exists (and avoid creating a duplicate). Best-effort:
+ * if the "Razorpay Subscription ID" property doesn't exist yet, it logs and skips.
+ */
+export async function markSubscriptionCreated(notionPageId: string, subscriptionId: string): Promise<void> {
+  try {
+    await notion.pages.update({
+      page_id: notionPageId,
+      properties: { "Razorpay Subscription ID": { rich_text: [{ text: { content: subscriptionId } }] } },
+    })
+  } catch (e) {
+    console.warn("[markSubscriptionCreated] could not write subscription id (add a 'Razorpay Subscription ID' text property in Notion):", e)
+  }
+}
+
+/** Set the guest tags (multi_select "Tags") on a member page. Best-effort. */
+export async function setGuestTags(notionPageId: string, tags: string[]): Promise<void> {
+  await notion.pages.update({
+    page_id: notionPageId,
+    properties: { "Tags": { multi_select: tags.map((name) => ({ name })) } },
+  })
+}
+
 export async function markDepositPaid(notionPageId: string) {
   await notion.pages.update({
     page_id: notionPageId,
@@ -445,6 +739,237 @@ export async function markDepositPaid(notionPageId: string) {
       "Deposit Paid ✓": { checkbox: true },
     },
   })
+}
+
+/**
+ * Returns the page only if it is a room-board bed page (titled "Member Name").
+ * Guest-info form pages title their name "🧑‍💼 Guest Name", so this safely
+ * returns null for them — preventing webhook-driven mutations from corrupting
+ * the wrong record when a notes.notion_page_id is ambiguous.
+ */
+async function loadBedPage(notionPageId: string): Promise<PageObjectResponse | null> {
+  try {
+    const page = await notion.pages.retrieve({ page_id: notionPageId }) as PageObjectResponse
+    if (!isFullPage(page)) return null
+    if (page.properties["Member Name"]?.type !== "title") return null
+    return page
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Confirm a bed as Occupied once payment lands. Peepal: flip Incoming → Occupied.
+ * Plaza derives occupancy from Member Name (already written at check-in), so this
+ * is a no-op there. Safe no-op if the page is not a bed page.
+ */
+export async function confirmBedOccupied(notionPageId: string): Promise<void> {
+  const page = await loadBedPage(notionPageId)
+  if (!page) return
+  if (getSelect(page, "Status") === "Incoming") {
+    await notion.pages.update({
+      page_id: notionPageId,
+      properties: { Status: { select: { name: "Occupied" } } },
+    })
+  }
+}
+
+/**
+ * Revert a bed allotment back to Vacant when a payment fails or is refunded —
+ * "our room allotment status should go back". Only reverts a hold for the SAME
+ * guest (never evicts a different live occupant), and no-ops on non-bed pages.
+ * Returns true if a bed was reverted.
+ */
+export async function revertBedAllotment(notionPageId: string, guestName?: string): Promise<boolean> {
+  const page = await loadBedPage(notionPageId)
+  if (!page) return false
+
+  const currentName = getTitle(page, "Member Name")
+  if (!currentName || currentName.startsWith("Vacant")) return false
+  // Only undo the hold we created for this same guest.
+  if (guestName && currentName.trim().toLowerCase() !== guestName.trim().toLowerCase()) return false
+
+  const isPlaza = page.properties["Deposit Paid ✓"] !== undefined
+  const props: Props = {
+    "Member Name":     { title: [{ text: { content: "Vacant" } }] },
+    "Check In Date":   { date: null },
+    "Check Out Date ": { date: null },
+  }
+  if (isPlaza) {
+    props["Deposit Paid ✓"] = { checkbox: false }
+  } else {
+    props["Status"] = { select: { name: "Vacant" } }
+  }
+  await notion.pages.update({ page_id: notionPageId, properties: props })
+  return true
+}
+
+/**
+ * Revert a bed allotment found by the guest's email — used by the refund/failed
+ * webhook, where Razorpay's refund/payment entity notes do NOT carry the original
+ * payment-link's notion_page_id, so we can't rely on the id. Searches both member
+ * data sources for the guest's bed and reverts it (same-guest guard applies).
+ */
+export async function revertBedAllotmentByEmail(email: string, guestName?: string): Promise<boolean> {
+  if (!email?.trim()) return false
+  for (const ds of [DS_PLAZA, DS_PEEPAL]) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const res = await (notion.dataSources as any).query({
+        data_source_id: ds,
+        filter: { property: "Email", email: { equals: email.trim() } },
+        page_size: 1,
+      })
+      const page = res.results?.find((p: unknown) => isFullPage(p as PageObjectResponse))
+      if (page) {
+        const reverted = await revertBedAllotment(page.id, guestName)
+        if (reverted) return true
+      }
+    } catch (e) {
+      console.warn("[revertBedAllotmentByEmail] query failed:", e)
+    }
+  }
+  return false
+}
+
+// Structural fields that describe the BED/ROOM, not the guest — these never
+// move with a guest and are never wiped on checkout-by-move.
+const BED_OWNED_FIELDS = new Set<string>([
+  "Room", "Floor", "Room Type",
+  "Room Type Default Tariff Incl GST", "Tariff without GST",
+])
+// Occupancy fields handled explicitly (not via the generic copy/clear loop).
+const OCCUPANCY_FIELDS = new Set<string>(["Member Name", "Status"])
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function copyPropValue(p: any): any | null {
+  switch (p?.type) {
+    case "title":        return { title: p.title.map((t: { plain_text: string }) => ({ text: { content: t.plain_text } })) }
+    case "rich_text":    return { rich_text: p.rich_text.map((t: { plain_text: string }) => ({ text: { content: t.plain_text } })) }
+    case "number":       return { number: p.number ?? null }
+    case "select":       return { select: p.select ? { name: p.select.name } : null }
+    case "multi_select": return { multi_select: p.multi_select.map((o: { name: string }) => ({ name: o.name })) }
+    case "date":         return { date: p.date ? { start: p.date.start, end: p.date.end ?? null } : null }
+    case "checkbox":     return { checkbox: p.checkbox }
+    case "email":        return { email: p.email ?? null }
+    case "phone_number": return { phone_number: p.phone_number ?? null }
+    case "url":          return { url: p.url ?? null }
+    case "people":       return { people: p.people.map((u: { id: string }) => ({ id: u.id })) }
+    default:             return null   // formula / rollup / files / created_* are read-only or unsafe to copy
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function emptyPropValue(p: any): any | null {
+  switch (p?.type) {
+    case "title":        return { title: [] }
+    case "rich_text":    return { rich_text: [] }
+    case "number":       return { number: null }
+    case "select":       return { select: null }
+    case "multi_select": return { multi_select: [] }
+    case "date":         return { date: null }
+    case "checkbox":     return { checkbox: false }
+    case "email":        return { email: null }
+    case "phone_number": return { phone_number: null }
+    case "url":          return { url: null }
+    case "people":       return { people: [] }
+    // NOTE: "files" deliberately omitted — see reassignBed. Notion-hosted file
+    // URLs expire and can't be reliably re-attached to another page via the API,
+    // so we neither move nor clear ID-document files here.
+    default:             return null
+  }
+}
+
+/**
+ * Reassign a guest from their current bed to a different bed.
+ * Steps:
+ *  1. Assert the target bed is vacant (throws BedOccupiedError if not).
+ *  2. Copy EVERY guest-owned field from the old bed to the new bed (only fields
+ *     that also exist on the target schema, so cross-property moves are safe).
+ *  3. Wipe EVERY guest-owned field on the old bed back to empty / Vacant.
+ *  4. Update the guest-info form page Room field to the new room label.
+ */
+export async function reassignBed({
+  oldBedPageId,
+  newBedPageId,
+  newRoomLabel,
+  property,
+  formPageId,
+}: {
+  oldBedPageId: string
+  newBedPageId: string
+  newRoomLabel: string
+  property: "safina-plaza" | "peepal-tree"
+  formPageId?: string
+}): Promise<void> {
+  // 1 — Read both bed pages. We need the target schema so we only write fields
+  //     it actually has (Plaza and Peepal have different property sets).
+  const oldPage = await loadBedPage(oldBedPageId)
+  if (!oldPage) throw new Error("Source bed page not found")
+  const newPage = await loadBedPage(newBedPageId)
+  if (!newPage) throw new Error("Destination bed page not found")
+
+  const guestName = getTitle(oldPage, "Member Name")
+  const email     = getEmail(oldPage, "Email")
+  const phone     = getPhone(oldPage, "Phone")
+  const checkIn   = getDate(oldPage, "Check In Date")
+  const incoming  = checkIn ? new Date(checkIn) > new Date() : false
+
+  // 2 — Assert new bed is empty (never overwrite a live guest)
+  if (email) await assertBedVacant(newBedPageId, email, phone ?? undefined)
+
+  // 3 — Move EVERY guest-owned field to the new bed. A field moves only if the
+  //     target page has the same property + type, so cross-property moves carry
+  //     just the common fields instead of erroring on unknown properties.
+  const moveProps: Props = {}
+  for (const [name, prop] of Object.entries(oldPage.properties)) {
+    if (BED_OWNED_FIELDS.has(name) || OCCUPANCY_FIELDS.has(name)) continue
+    const target = newPage.properties[name]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!target || (target as any).type !== (prop as any).type) continue
+    const payload = copyPropValue(prop)
+    if (payload) moveProps[name] = payload
+  }
+  moveProps["Member Name"] = { title: [{ text: { content: guestName } }] }
+  if (newPage.properties["Status"]) {
+    moveProps["Status"] = { select: { name: incoming ? "Incoming" : "Occupied" } }
+  }
+  await notion.pages.update({ page_id: newBedPageId, properties: moveProps })
+
+  // 4 — Wipe EVERY guest-owned field on the old bed back to empty / Vacant.
+  const clearProps: Props = {}
+  for (const [name, prop] of Object.entries(oldPage.properties)) {
+    if (BED_OWNED_FIELDS.has(name) || OCCUPANCY_FIELDS.has(name)) continue
+    const payload = emptyPropValue(prop)
+    if (payload) clearProps[name] = payload
+  }
+  clearProps["Member Name"] = { title: [{ text: { content: "Vacant" } }] }
+  if (oldPage.properties["Status"]) clearProps["Status"] = { select: { name: "Vacant" } }
+  await notion.pages.update({ page_id: oldBedPageId, properties: clearProps })
+
+  // 5 — Update the guest-info form page Room field (best-effort)
+  if (formPageId) {
+    try {
+      await notion.pages.update({
+        page_id: formPageId,
+        properties: { "Room": { rich_text: [{ text: { content: newRoomLabel } }] } },
+      })
+    } catch (e) {
+      console.warn("[reassignBed] Failed to update form page room:", e)
+    }
+  }
+}
+
+/** Best-effort: set the booking/member page Status select (Notion auto-creates the option). */
+export async function markGuestStatus(notionPageId: string, status: string): Promise<void> {
+  try {
+    await notion.pages.update({
+      page_id: notionPageId,
+      properties: { "Status": { select: { name: status } } },
+    })
+  } catch (e) {
+    console.warn(`[markGuestStatus] could not set Status="${status}":`, e)
+  }
 }
 
 // ─── Guest Info Form (from Lovable booking site) ──────────────────────────
@@ -564,18 +1089,24 @@ export async function activateBooking(formPageId: string): Promise<{
 
   if (!matchPage) return { ok: false, error: `Room "${booking.room}" not found in ${booking.property} database` }
 
-  // 3. Write guest info to the Active Members DB page
-  await checkInGuest({
-    notionPageId: matchPage.id,
-    property: booking.property,
-    guestName: booking.guestName,
-    gender: booking.gender === "other" ? "male" : booking.gender,
-    phone: booking.phone,
-    email: booking.email,
-    checkInDate: booking.checkInDate ?? new Date().toISOString().slice(0, 10),
-    checkOutDate: booking.checkOutDate ?? undefined,
-    monthlyRate: booking.tariff,
-  })
+  // 3. Write guest info to the Active Members DB page.
+  //    If the matched bed is still occupied, refuse rather than overwrite.
+  try {
+    await checkInGuest({
+      notionPageId: matchPage.id,
+      property: booking.property,
+      guestName: booking.guestName,
+      gender: booking.gender === "other" ? "male" : booking.gender,
+      phone: booking.phone,
+      email: booking.email,
+      checkInDate: booking.checkInDate ?? new Date().toISOString().slice(0, 10),
+      checkOutDate: booking.checkOutDate ?? undefined,
+      monthlyRate: booking.tariff,
+    })
+  } catch (e) {
+    if (e instanceof BedOccupiedError) return { ok: false, error: e.message }
+    throw e
+  }
 
   // 4. Update form page status to "pre-check in + arrival"
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -809,6 +1340,45 @@ export async function assignTicket(notionPageId: string, staffNames: string[]): 
 }
 
 // ─── Bed page lookup (for confirm route) ─────────────────────────────────────
+
+/**
+ * Returns the name + check-in date of any active booking in the guest-info DB
+ * that targets the same room and has a check-in date strictly after `afterDate`
+ * and on or before `beforeDate`, excluding the current guest's own page.
+ */
+export async function findConflictingBookingsOnRoom({
+  room, afterDate, beforeDate, excludePageId,
+}: {
+  room: string
+  afterDate: string
+  beforeDate: string
+  excludePageId: string
+}): Promise<{ guestName: string; checkIn: string }[]> {
+  const DS_FORM = process.env.NOTION_DS_FORM!
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const res = await (notion.dataSources as any).query({
+    data_source_id: DS_FORM,
+    filter: {
+      and: [
+        { property: "Room", rich_text: { contains: room.replace(/^Room\s*/i, "").trim() } },
+        { property: "Check In Date", date: { after: afterDate } },
+        { property: "Check In Date", date: { on_or_before: beforeDate } },
+        { property: "Status", select: { does_not_equal: "Cancelled" } },
+      ],
+    },
+    page_size: 10,
+  })
+
+  const conflicts: { guestName: string; checkIn: string }[] = []
+  for (const p of res.results) {
+    if (!isFullPage(p)) continue
+    if (p.id === excludePageId) continue
+    const name = getTitle(p, "🧑‍💼 Guest Name") || getRichText(p, "Guest Name") || "Unknown guest"
+    const checkIn = getDate(p, "Check In Date")
+    if (checkIn) conflicts.push({ guestName: name, checkIn })
+  }
+  return conflicts
+}
 
 export async function findBedPageId(
   property: "safina-plaza" | "peepal-tree",

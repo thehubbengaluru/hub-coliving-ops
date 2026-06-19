@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createRentSubscription } from "@/lib/razorpay"
-import { getGuestContact } from "@/lib/notion"
+import { getGuestContact, markSubscriptionCreated } from "@/lib/notion"
 import type { Property } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -31,6 +31,9 @@ export async function POST(req: Request) {
       phone,
       monthlyRate,
     })
+
+    // Record on the member page so we don't create a duplicate later.
+    await markSubscriptionCreated(notionPageId, sub.id)
 
     return NextResponse.json({ id: sub.id, url: sub.short_url, status: sub.status, planId: sub.plan_id })
   } catch (err) {

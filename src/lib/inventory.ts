@@ -19,6 +19,9 @@ export interface BedListing {
   blockStartDate:       string | null  // raw block-start date for Blocked beds; derived fields computed at call time
   monthlyRate:          number
   weeklyRate:           number
+  // For a vacant bed in a SHARING room: the gender of the existing occupant in
+  // the other bed, or null if the room is empty (no gender restriction applies).
+  roommateGender?:      "male" | "female" | null
 }
 
 // ─── Price matrix (INR, GST inclusive) ───────────────────────────────────────

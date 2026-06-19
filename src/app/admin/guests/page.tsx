@@ -29,6 +29,8 @@ type ActiveGuest = {
   entity: "feazzo" | "safina-ventures"
   gender: string
   depositPaid?: boolean
+  notionPageId?: string
+  tags: string[]
 }
 
 function buildGuests(rooms: Room[]): ActiveGuest[] {
@@ -51,13 +53,17 @@ function buildGuests(rooms: Room[]): ActiveGuest[] {
         entity: room.entity,
         gender: bed.genderRestriction,
         depositPaid: bed.depositPaid,
+        notionPageId: bed.guestId,
+        tags: bed.tags ?? [],
       })
     }
   }
   return guests
 }
 
-function ActiveGuestCard({ guest }: { guest: ActiveGuest }) {
+const GUEST_TAG_OPTIONS = ["Long term", "HWC", "Pet Parent", "Special Guest"]
+
+function ActiveGuestCard({ guest, onEditTags }: { guest: ActiveGuest; onEditTags: (g: ActiveGuest) => void }) {
   return (
     <Card className="bg-card border-border shadow-none hover:border-slate-300 hover:shadow-sm transition-all duration-150">
       <CardContent className="p-4">
@@ -123,6 +129,21 @@ function ActiveGuestCard({ guest }: { guest: ActiveGuest }) {
             }`}>
               {guest.depositPaid ? "Deposit paid" : "Deposit due"}
             </Badge>
+          )}
+        </div>
+
+        {/* Guest tags (gender + custom) */}
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+          {guest.gender && (
+            <Badge variant="outline" className="text-[10px] h-4 px-1.5 capitalize bg-slate-50 text-slate-600 border-slate-200">{guest.gender}</Badge>
+          )}
+          {guest.tags.map((t) => (
+            <Badge key={t} variant="outline" className="text-[10px] h-4 px-1.5 bg-violet-50 text-violet-700 border-violet-200">{t}</Badge>
+          ))}
+          {guest.notionPageId && (
+            <button onClick={() => onEditTags(guest)} className="text-[10px] text-muted-foreground hover:text-foreground underline ml-auto">
+              Edit tags
+            </button>
           )}
         </div>
       </CardContent>
@@ -285,6 +306,28 @@ export default function GuestsPage() {
       .catch(() => setLoadingActive(false))
   }, [])
 
+  const handleEditTags = useCallback(async (guest: ActiveGuest) => {
+    if (!guest.notionPageId) return
+    const current = guest.tags.filter((t) => GUEST_TAG_OPTIONS.includes(t))
+    const input = window.prompt(
+      `Tags for ${guest.name} (comma-separated).\nAllowed: ${GUEST_TAG_OPTIONS.join(", ")}`,
+      current.join(", "),
+    )
+    if (input === null) return
+    const tags = input.split(",").map((s) => s.trim()).filter(Boolean)
+    try {
+      const res = await fetch("/api/guests/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notionPageId: guest.notionPageId, tags }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Failed") }
+      fetchActive()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Failed to update tags")
+    }
+  }, [fetchActive])
+
   const fetchPending = useCallback(() => {
     setLoadingPending(true)
     fetch("/api/bookings/pending")
@@ -364,7 +407,7 @@ export default function GuestsPage() {
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredGuests.map(guest => <ActiveGuestCard key={guest.id} guest={guest} />)}
+                {filteredGuests.map(guest => <ActiveGuestCard key={guest.id} guest={guest} onEditTags={handleEditTags} />)}
               </div>
               {filteredGuests.length === 0 && (
                 <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">

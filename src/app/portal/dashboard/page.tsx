@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useState, useCallback, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Loader2, LogOut, User, Wrench, CreditCard, CalendarX } from "lucide-react"
 
 const AMBER = "#F9A91F"
@@ -25,7 +25,7 @@ type GuestData = {
   emergencyRelation: string
 }
 
-type Tab = "info" | "maintenance" | "payments" | "checkout"
+type Tab = "info" | "maintenance" | "payments" | "checkout" | "cancel"
 
 const MAINTENANCE_CATEGORIES = [
   "Electrical",
@@ -70,8 +70,9 @@ function TextInput({ value, onChange, placeholder, type = "text" }: {
   )
 }
 
-export default function PortalDashboard() {
+function PortalDashboardInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [guest, setGuest] = useState<GuestData | null>(null)
   const [tab, setTab] = useState<Tab>("info")
 
@@ -99,6 +100,20 @@ export default function PortalDashboard() {
   const [coMsg, setCoMsg] = useState<string | null>(null)
   const [coError, setCoError] = useState<string | null>(null)
 
+  // Cancel booking state
+  const [cancelConfirm, setCancelConfirm] = useState(false)
+  const [cancelSaving, setCancelSaving] = useState(false)
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+
+  // Pay-rent state
+  const [payingRent, setPayingRent] = useState(false)
+  const [payRentError, setPayRentError] = useState<string | null>(null)
+  const [rentLinkId, setRentLinkId] = useState<string | null>(null)
+  const [rentProperty, setRentProperty] = useState<string | null>(null)
+  const [rentPaid, setRentPaid] = useState(false)
+  const [rentChecking, setRentChecking] = useState(false)
+
   useEffect(() => {
     const stored = localStorage.getItem("portal_guest")
     if (!stored) { router.replace("/portal"); return }
@@ -109,9 +124,43 @@ export default function PortalDashboard() {
     setOccupation(g.occupation ?? "")
     setWorkAddress(g.workAddress ?? "")
     setEmergencyName(g.emergencyName ?? "")
+
+    // If returning from Razorpay rent payment callback, restore pending link and switch to payments tab
+    const fromRent = searchParams.get("rentReturn") === "1"
+    const savedRentLink = localStorage.getItem(`hub_rent_link_${g.notionPageId}`)
+    if (fromRent && savedRentLink) {
+      try {
+        const { linkId, property } = JSON.parse(savedRentLink) as { linkId: string; property: string }
+        setRentLinkId(linkId)
+        setRentProperty(property)
+        setTab("payments")
+      } catch { /* ignore */ }
+    }
     setEmergencyNumber(g.emergencyNumber ?? "")
     setEmergencyRelation(g.emergencyRelation ?? "")
     if (g.checkOut) setCoDate(g.checkOut)
+
+    // Re-fetch fresh data from Notion in background to get updated status/property
+    fetch("/api/portal/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: g.email }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(fresh => {
+        if (!fresh) return
+        setGuest(fresh)
+        localStorage.setItem("portal_guest", JSON.stringify(fresh))
+        setContactNumber(fresh.contactNumber ? String(fresh.contactNumber) : "")
+        setOrgName(fresh.orgName ?? "")
+        setOccupation(fresh.occupation ?? "")
+        setWorkAddress(fresh.workAddress ?? "")
+        setEmergencyName(fresh.emergencyName ?? "")
+        setEmergencyNumber(fresh.emergencyNumber ?? "")
+        setEmergencyRelation(fresh.emergencyRelation ?? "")
+        if (fresh.checkOut) setCoDate(fresh.checkOut)
+      })
+      .catch(() => { /* ignore */ })
   }, [router])
 
   function logout() {
@@ -187,11 +236,88 @@ export default function PortalDashboard() {
       setGuest(updated)
       localStorage.setItem("portal_guest", JSON.stringify(updated))
     } catch (e) {
-      setCoError(e instanceof Error ? e.message : "Failed to update.")
+      setCoError(e instanceof Error ? e.message : "Failed to update. Please try again or contact the office.")
     } finally {
       setCoSaving(false)
     }
   }
+
+  async function handleCancelBooking() {
+    if (!guest) return
+    setCancelSaving(true); setCancelError(null); setCancelMsg(null)
+    try {
+      const res = await fetch("/api/portal/cancel-booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notionPageId: guest.notionPageId, email: guest.email }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error)
+      setCancelMsg(d.message)
+      setCancelConfirm(false)
+      const updated = { ...guest, status: "Cancelled" }
+      setGuest(updated)
+      localStorage.setItem("portal_guest", JSON.stringify(updated))
+    } catch (e) {
+      setCancelError(e instanceof Error ? e.message : "Failed to cancel booking.")
+    } finally {
+      setCancelSaving(false)
+    }
+  }
+
+  async function handlePayRent() {
+    if (!guest) return
+    setPayingRent(true); setPayRentError(null); setRentPaid(false)
+    try {
+      const callbackUrl = `${window.location.origin}/portal/dashboard?tab=payments&rentReturn=1`
+      const res = await fetch("/api/portal/pay-rent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notionPageId: guest.notionPageId,
+          room: guest.room,
+          guestName: guest.guestName,
+          email: guest.email,
+          phone: guest.contactNumber ? String(guest.contactNumber) : "",
+          amount: guest.monthlyRate,
+          callbackUrl,
+        }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error ?? "Failed")
+      // Store link info so we can poll after Razorpay callback
+      localStorage.setItem(`hub_rent_link_${guest.notionPageId}`, JSON.stringify({ linkId: d.linkId, property: d.property }))
+      setRentLinkId(d.linkId)
+      setRentProperty(d.property)
+      window.open(d.url, "_blank", "noopener")
+    } catch (e) {
+      setPayRentError(e instanceof Error ? e.message : "Failed to start payment")
+    } finally {
+      setPayingRent(false)
+    }
+  }
+
+  const checkRentStatus = useCallback(async (showSpinner = false) => {
+    if (!rentLinkId || !rentProperty || rentPaid) return
+    if (showSpinner) setRentChecking(true)
+    try {
+      const p = new URLSearchParams({ pageId: guest?.notionPageId ?? "", property: rentProperty, depositLinkId: rentLinkId })
+      const r = await fetch(`/api/bookings/payment-status?${p}`)
+      const d = await r.json()
+      if (d.depositPaid) {
+        setRentPaid(true)
+        if (guest) localStorage.removeItem(`hub_rent_link_${guest.notionPageId}`)
+      }
+    } catch { /* ignore */ }
+    finally { if (showSpinner) setRentChecking(false) }
+  }, [rentLinkId, rentProperty, rentPaid, guest])
+
+  useEffect(() => {
+    if (!rentLinkId || rentPaid) return
+    checkRentStatus()
+    const id = setInterval(() => checkRentStatus(), 6000)
+    return () => clearInterval(id)
+  }, [rentLinkId, rentPaid, checkRentStatus])
 
   // Minimum checkout date: 1 calendar month from today
   const minCheckoutDate = (() => {
@@ -208,12 +334,43 @@ export default function PortalDashboard() {
     )
   }
 
+  // Maintenance & Check-out only make sense for a guest with an occupied room.
+  const hasRoom = !!(guest.room && guest.room.trim())
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const checkInDate = guest.checkIn ? new Date(guest.checkIn + "T00:00:00") : null
+  const checkOutDate = guest.checkOut ? new Date(guest.checkOut + "T00:00:00") : null
+  const checkInHappened = checkInDate ? checkInDate <= today : false
+  const checkInUpcoming = checkInDate ? checkInDate > today : false
+  const isConfirmedBooking = /confirm|paid|incoming|occupied/i.test(guest.status)
+
+  // Derive a human-readable occupancy label from dates + status.
+  function occupancyLabel(): string {
+    const s = guest?.status?.toLowerCase() ?? ""
+    if (s.includes("cancel")) return "Cancelled"
+    if (s.includes("checked-out") || s.includes("checked out")) return "Checked out"
+    if (!checkInDate) return "—"
+    if (checkInUpcoming) {
+      return "Arriving " + checkInDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    }
+    if (checkOutDate && checkOutDate > today) {
+      return "Checking out " + checkOutDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    }
+    return "Currently staying"
+  }
+
+
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "info",        label: "My Info",        icon: <User className="w-4 h-4" /> },
-    { id: "maintenance", label: "Maintenance",     icon: <Wrench className="w-4 h-4" /> },
+    ...(hasRoom ? [{ id: "maintenance" as Tab, label: "Maintenance", icon: <Wrench className="w-4 h-4" /> }] : []),
     { id: "payments",    label: "Payments",        icon: <CreditCard className="w-4 h-4" /> },
-    { id: "checkout",    label: "Check-out",       icon: <CalendarX className="w-4 h-4" /> },
+    ...(hasRoom && checkInHappened ? [{ id: "checkout" as Tab, label: "Check-out", icon: <CalendarX className="w-4 h-4" /> }] : []),
+    ...(hasRoom && checkInUpcoming && isConfirmedBooking ? [{ id: "cancel" as Tab, label: "Cancel", icon: <CalendarX className="w-4 h-4" /> }] : []),
   ]
+
+  // If the active tab got gated away, fall back to My Info.
+  if (tab === "maintenance" && !hasRoom) setTab("info")
+  if (tab === "checkout" && (!hasRoom || !checkInHappened)) setTab("info")
+  if (tab === "cancel" && (!hasRoom || !checkInUpcoming || !isConfirmedBooking)) setTab("info")
 
   return (
     <div className="min-h-screen bg-[#FAF9F7]">
@@ -258,8 +415,12 @@ export default function PortalDashboard() {
               </p>
             </div>
             <div>
-              <p className="opacity-50 text-xs">Status</p>
-              <p className="font-medium capitalize">{guest.status || "—"}</p>
+              <p className="opacity-50 text-xs">Occupancy</p>
+              <p className="font-medium">{occupancyLabel()}</p>
+            </div>
+            <div className="col-span-2">
+              <p className="opacity-50 text-xs">Security deposit</p>
+              <p className="font-medium text-green-400">Paid ✓</p>
             </div>
           </div>
           {guest.monthlyRate > 0 && (
@@ -408,6 +569,23 @@ export default function PortalDashboard() {
         {tab === "payments" && (
           <Section title="Payment timeline">
             <div className="space-y-4">
+              {/* Security deposit — always paid (deposit is the gate to portal access) */}
+              <div className="rounded-xl border bg-green-50 border-green-200 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-green-900">Security deposit</p>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-200 text-green-800">Paid</span>
+                </div>
+                {guest.monthlyRate > 0 && (
+                  <p className="text-xl font-bold text-green-900">
+                    ₹{guest.monthlyRate.toLocaleString("en-IN")}
+                    <span className="text-sm font-normal ml-1 opacity-70">(= 1 month's rent)</span>
+                  </p>
+                )}
+                <p className="text-xs text-green-700">
+                  Held against potential damages. Refunded within 7 working days after you check out.
+                </p>
+              </div>
+
               {/* Current rent info */}
               <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 space-y-2">
                 <p className="text-sm font-semibold text-amber-900">Monthly rent</p>
@@ -444,13 +622,48 @@ export default function PortalDashboard() {
                     <span className="font-medium">₹{guest.monthlyRate.toLocaleString("en-IN")} (Incl. GST)</span>
                   </div>
                 )}
+
+                {guest.monthlyRate > 0 && (
+                  <div className="pt-2 border-t border-gray-100 space-y-2">
+                    {rentPaid ? (
+                      <div className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg text-sm font-semibold text-white bg-green-600">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        Paid — ₹{guest.monthlyRate.toLocaleString("en-IN")} received
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handlePayRent}
+                        disabled={payingRent}
+                        className="w-full py-2.5 rounded-lg text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-2"
+                        style={{ backgroundColor: AMBER }}
+                      >
+                        {payingRent ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                        Pay this month&rsquo;s rent (₹{guest.monthlyRate.toLocaleString("en-IN")})
+                      </button>
+                    )}
+                    {payRentError && <p className="text-xs text-red-500">{payRentError}</p>}
+                    {rentLinkId && !rentPaid && (
+                      <button
+                        type="button"
+                        onClick={() => checkRentStatus(true)}
+                        disabled={rentChecking}
+                        className="flex items-center justify-center gap-2 w-full py-2 rounded-lg text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all disabled:opacity-60"
+                      >
+                        {rentChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                        I&rsquo;ve paid — check status
+                      </button>
+                    )}
+                    <p className="text-[11px] text-gray-400">
+                      Your rent is normally <span className="font-medium text-gray-600">auto-debited via your Razorpay subscription</span> on the 1st.
+                      Use this one-off payment link only if a charge was missed or your mandate isn&rsquo;t active yet.
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div className="rounded-xl border border-gray-100 p-4 text-sm text-gray-500 space-y-1">
-                <p className="font-medium text-gray-700">Security deposit</p>
-                <p>Your security deposit (equivalent to 1 month's rent) is held against potential damages.</p>
-                <p className="mt-1">It will be refunded within <span className="font-medium text-gray-800">7 working days</span> after your notice period ends and you check out.</p>
-                <p className="mt-1 text-xs text-amber-600">The deposit cannot be used to offset your monthly rent.</p>
+              <div className="rounded-xl border border-gray-100 p-4 text-xs text-gray-400 space-y-1">
+                <p className="font-medium text-gray-500">Deposit policy</p>
+                <p>The deposit cannot be used to offset monthly rent. It is refunded within 7 working days after you check out, minus any outstanding dues.</p>
               </div>
 
               <p className="text-xs text-gray-400 text-center">
@@ -506,7 +719,75 @@ export default function PortalDashboard() {
             </div>
           </Section>
         )}
+
+        {/* Tab: Cancel Booking */}
+        {tab === "cancel" && (
+          <Section title="Cancel booking">
+            <div className="space-y-5">
+              <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700 space-y-2">
+                <p className="font-medium text-red-800">Cancellation policy</p>
+                <ul className="space-y-1 list-disc list-inside text-xs">
+                  <li>A cancellation fee of <strong>₹3,500</strong> applies.</li>
+                  <li>Your security deposit will be refunded minus the cancellation fee within 7 working days.</li>
+                  <li>Your bed will be released back to the available pool.</li>
+                  <li>Cancellations are only possible before check-in.</li>
+                </ul>
+              </div>
+
+              {cancelMsg ? (
+                <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-sm text-green-700">
+                  {cancelMsg}
+                </div>
+              ) : !cancelConfirm ? (
+                <button
+                  type="button"
+                  onClick={() => setCancelConfirm(true)}
+                  className="w-full py-3 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
+                >
+                  Cancel my booking
+                </button>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-700 font-medium">
+                    Are you sure? A ₹3,500 cancellation fee will apply and this cannot be undone.
+                  </p>
+                  {cancelError && <p className="text-sm text-red-500">{cancelError}</p>}
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setCancelConfirm(false)}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+                    >
+                      Go back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelBooking}
+                      disabled={cancelSaving}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      {cancelSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                      Yes, cancel booking
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+        )}
       </main>
     </div>
+  )
+}
+
+export default function PortalDashboard() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      </div>
+    }>
+      <PortalDashboardInner />
+    </Suspense>
   )
 }

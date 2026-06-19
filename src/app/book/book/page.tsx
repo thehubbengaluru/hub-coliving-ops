@@ -983,8 +983,10 @@ export default function BookPage() {
                     style={{ accentColor: AMBER }}
                   />
                   <span className="text-sm text-gray-700">
-                    I have read and agree to the House Rules and Terms of
-                    Residency
+                    I have read and agree to the House Rules,{" "}
+                    <a href="/legal/terms-and-conditions" target="_blank" rel="noopener noreferrer" style={{ color: AMBER }} className="underline">Terms &amp; Conditions</a>,{" "}
+                    <a href="/legal/refund-policy" target="_blank" rel="noopener noreferrer" style={{ color: AMBER }} className="underline">Refund Policy</a>, and{" "}
+                    <a href="/legal/cancellation-policy" target="_blank" rel="noopener noreferrer" style={{ color: AMBER }} className="underline">Cancellation Policy</a>
                     <span className="ml-1 font-semibold" style={{ color: AMBER }}>
                       *
                     </span>

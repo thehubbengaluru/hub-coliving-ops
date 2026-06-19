@@ -31,6 +31,7 @@ export async function createDepositLink({
   amount,
   notionPageId,
   zohoRetainerId,
+  callbackUrl,
 }: {
   property: Property
   guestName: string
@@ -39,6 +40,7 @@ export async function createDepositLink({
   amount: number
   notionPageId?: string
   zohoRetainerId?: string
+  callbackUrl?: string
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
   const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
@@ -51,9 +53,40 @@ export async function createDepositLink({
     customer: { name: guestName, email, contact: phone },
     notify: { sms: true, email: true },
     reminder_enable: true,
+    ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),
     notes: { property, type: "security_deposit", guest_name: guestName, notion_page_id: notionPageId ?? "", zoho_retainer_id: zohoRetainerId ?? "" },
   })
 
+  return link as RazorpayLink
+}
+
+// One-off rent payment link (manual rent payment from the guest portal — distinct
+// from the auto-debit subscription mandate).
+export async function createRentPaymentLink({
+  property, guestName, email, phone, amount, description, notionPageId, callbackUrl,
+}: {
+  property: Property
+  guestName: string
+  email: string
+  phone: string
+  amount: number
+  description?: string
+  notionPageId?: string
+  callbackUrl?: string
+}): Promise<RazorpayLink> {
+  const rzp = getClient(property)
+  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const link = await (rzp.paymentLink as any).create({
+    amount: Math.round(amount * 100),
+    currency: "INR",
+    description: description ?? `Monthly Rent — ${propertyLabel}`,
+    customer: { name: guestName, email, contact: phone },
+    notify: { sms: true, email: true },
+    reminder_enable: true,
+    ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),
+    notes: { property, type: "rent", guest_name: guestName, notion_page_id: notionPageId ?? "" },
+  })
   return link as RazorpayLink
 }
 
@@ -91,6 +124,7 @@ export async function createProRatedLink({
   amount,
   description,
   notionPageId,
+  callbackUrl,
 }: {
   property: Property
   guestName: string
@@ -99,6 +133,7 @@ export async function createProRatedLink({
   amount: number
   description: string
   notionPageId?: string
+  callbackUrl?: string
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -109,9 +144,21 @@ export async function createProRatedLink({
     customer: { name: guestName, email, contact: phone },
     notify: { sms: true, email: true },
     reminder_enable: true,
+    ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),
     notes: { property, type: "pro_rated_rent", guest_name: guestName, notion_page_id: notionPageId ?? "" },
   })
   return link as RazorpayLink
+}
+
+export async function getPaymentLinkStatus(property: Property, linkId: string): Promise<string | null> {
+  try {
+    const rzp = getClient(property)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const link = await (rzp.paymentLink as any).fetch(linkId)
+    return (link?.status as string) ?? null
+  } catch {
+    return null
+  }
 }
 
 export async function createRentSubscription({

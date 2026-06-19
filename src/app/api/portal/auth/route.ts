@@ -4,7 +4,9 @@ import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoint
 
 export const dynamic = "force-dynamic"
 
-const DS_FORM = process.env.NOTION_DS_FORM!
+const DS_FORM   = process.env.NOTION_DS_FORM!
+const DS_PLAZA  = process.env.NOTION_DS_PLAZA!
+const DS_PEEPAL = process.env.NOTION_DS_PEEPAL!
 
 function getEmail(page: PageObjectResponse): string | null {
   const p = page.properties["✉️ Email"]
@@ -35,7 +37,6 @@ function getNumber(page: PageObjectResponse, key: string): number | null {
 }
 
 async function findGuestByEmail(email: string): Promise<PageObjectResponse | null> {
-  // DS_FORM is a Notion data source — query via dataSources.query
   const client = new Client({ auth: process.env.NOTION_TOKEN })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const res = await (client.dataSources as any).query({
@@ -53,6 +54,32 @@ async function findGuestByEmail(email: string): Promise<PageObjectResponse | nul
   return null
 }
 
+// Look up which property the guest's bed belongs to by searching both room boards.
+// Falls back to room-number inference (200+ → Plaza, 100–199 → Peepal Tree) if not on a board.
+async function resolveProperty(email: string, roomText?: string): Promise<string> {
+  const client = new Client({ auth: process.env.NOTION_TOKEN })
+  for (const [ds, label] of [[DS_PLAZA, "Safina Plaza"], [DS_PEEPAL, "Peepal Tree"]] as const) {
+    if (!ds) continue
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const res = await (client.dataSources as any).query({
+        data_source_id: ds,
+        filter: { property: "Email", email: { equals: email } },
+        page_size: 1,
+      })
+      if (res.results?.length > 0) return label
+    } catch { /* ignore per-DS errors */ }
+  }
+  // Fallback: extract the first number from the room string (e.g. "Room 316 · Bed A" → 316)
+  if (roomText) {
+    const match = roomText.match(/\d+/)
+    const n = match ? parseInt(match[0], 10) : NaN
+    if (n >= 100 && n < 200) return "Peepal Tree"
+    if (n >= 200) return "Safina Plaza"
+  }
+  return ""
+}
+
 export async function POST(req: Request) {
   try {
     const { email } = await req.json()
@@ -68,15 +95,23 @@ export async function POST(req: Request) {
     const checkOutDateRange = page.properties["📅 Check-in & Check-out Date (Estimated)"]
     const checkOut = checkOutDateRange?.type === "date" ? (checkOutDateRange.date?.end ?? null) : null
 
+    // "Tariff" is the monthly rate field in the form DB (no "Monthly Rate" field exists).
+    // Resolve property by looking up the guest on both room boards, with room-number fallback.
+    const roomText = getText(page, "Room")
+    const [monthlyRate, property] = await Promise.all([
+      Promise.resolve(getNumber(page, "Tariff") ?? 0),
+      resolveProperty(normalised, roomText),
+    ])
+
     return NextResponse.json({
       notionPageId: page.id,
       guestName: getText(page, "🧑‍💼 Guest Name"),
       email: getEmail(page),
       room: getText(page, "Room"),
-      property: getSelect(page, "🏠 Property"),
+      property,
       checkIn: getDate(page, "Check In Date"),
       checkOut,
-      monthlyRate: getNumber(page, "Monthly Rate") ?? 0,
+      monthlyRate,
       status: getSelect(page, "Status"),
       contactNumber: getNumber(page, "📞 Contact Number"),
       orgName: getText(page, "🏢 Organisation / 🎓 College Name"),

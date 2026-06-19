@@ -46,6 +46,17 @@ export async function GET() {
 
         const monthlyRate = MONTHLY_RATES[room.property][`${category}-${size}`]
 
+        // Gender of the existing occupant in the OTHER bed of a sharing room.
+        // null when the room is empty → no gender restriction on this bed.
+        let roommateGender: "male" | "female" | null = null
+        if (room.type === "sharing") {
+          const sibling = room.beds.find((b) => b.bedNumber !== bed.bedNumber)
+          const siblingOccupied = sibling && (sibling.status === "occupied" || sibling.status === "incoming" || sibling.status === "special")
+          if (siblingOccupied && sibling) {
+            roommateGender = sibling.genderRestriction === "female" ? "female" : "male"
+          }
+        }
+
         // Blocked beds whose block starts in the future are temporarily available.
         // Only applies to Peepal Tree where "blocked" is a staff-set status with a
         // future block date. On Plaza, "blocked" means the room is being serviced —
@@ -114,6 +125,7 @@ export async function GET() {
           blockStartDate: null,
           monthlyRate,
           weeklyRate: WEEKLY_RATE,
+          roommateGender,
         })
       }
     }

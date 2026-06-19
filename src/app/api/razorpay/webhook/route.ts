@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { verifyWebhookSignature } from "@/lib/razorpay"
-import { markDepositPaid } from "@/lib/notion"
+import { markDepositPaid, confirmBedOccupied, revertBedAllotment, revertBedAllotmentByEmail, markGuestStatus } from "@/lib/notion"
+import { sendEmail, financeRecipients } from "@/lib/email"
 import { markDepositReceived, markInvoicePaid, createRentInvoice, sendInvoice, zohoEnabled } from "@/lib/zoho"
 import type { Property } from "@/lib/types"
 
@@ -44,17 +45,45 @@ export async function POST(req: Request) {
       const notionPageId   = notes["notion_page_id"]
       const zohoRetainerId = notes["zoho_retainer_id"]
       const property       = (notes["property"] ?? "") as Property
+      const paymentType    = notes["type"] ?? "security_deposit"
       const paidAmount     = (pl.payment_link?.entity?.amount ?? 0) / 100
       const paymentRef     = pl.payment?.entity?.id ?? ""
       const paymentDate    = pl.payment?.entity?.created_at
         ? new Date(pl.payment.entity.created_at * 1000).toISOString().slice(0, 10)
         : new Date().toISOString().slice(0, 10)
 
-      if (notionPageId) {
+      if (notionPageId && paymentType === "security_deposit") {
         try {
           await markDepositPaid(notionPageId)
           console.log("[webhook] deposit marked paid in Notion:", notionPageId)
         } catch (e) { console.error("[webhook] Notion update failed:", e) }
+
+        // Confirm the bed as Occupied (Peepal: Incoming → Occupied). Safe no-op
+        // if notionPageId is a guest-info page rather than a bed page.
+        try {
+          await confirmBedOccupied(notionPageId)
+        } catch (e) { console.error("[webhook] confirmBedOccupied failed:", e) }
+
+        // Hardening: also flip the booking page Status to "Booking confirmed".
+        // The "Status" select always exists (set to "Deposit Pending" at booking),
+        // so the wizard's payment-status poll can detect Paid even if the booking
+        // DB lacks a "Deposit Paid ✓" checkbox. Best-effort.
+        try {
+          await markGuestStatus(notionPageId, "Booking confirmed")
+        } catch (e) { console.error("[webhook] markGuestStatus failed:", e) }
+      }
+
+      // Loop in finance on deposit receipt (Phase 4.5).
+      const financeTo = financeRecipients()
+      if (financeTo.length) {
+        const guestName = notes["guest_name"] ?? "Guest"
+        try {
+          await sendEmail({
+            to: financeTo,
+            subject: `Deposit received — ${guestName} (${property})`,
+            html: `<p>Security deposit of ₹${paidAmount.toLocaleString("en-IN")} received from <strong>${guestName}</strong> (${property}).</p><p>Payment ref: ${paymentRef}</p>`,
+          })
+        } catch (e) { console.error("[webhook] finance notify failed:", e) }
       }
 
       if (zohoEnabled(property) && zohoRetainerId) {
@@ -119,6 +148,46 @@ export async function POST(req: Request) {
           console.log("[webhook] Zoho monthly invoice created + paid + sent:", invoice.invoice_number)
         } catch (e) { console.error("[webhook] Zoho monthly invoice failed:", e) }
       }
+      break
+    }
+
+    // ── Payment failed or refunded → revert the room allotment ─────────────
+    // Refunds are manual-from-our-side only; if Razorpay refunds a failed
+    // payment, the bed must go back to Vacant so it isn't held by a non-paying
+    // booking. revertBedAllotment only undoes the same guest's hold and no-ops
+    // on non-bed pages, so a settled tenant is never evicted.
+    case "payment.failed":
+    case "refund.created":
+    case "refund.processed": {
+      const p = event.payload as {
+        payment?:        { entity?: { notes?: Record<string, string>; email?: string } }
+        payment_link?:   { entity?: { notes?: Record<string, string> } }
+        refund?:         { entity?: { notes?: Record<string, string> } }
+      }
+      const notes =
+        p.refund?.entity?.notes ??
+        p.payment?.entity?.notes ??
+        p.payment_link?.entity?.notes ??
+        {}
+      const notionPageId = notes["notion_page_id"]
+      const guestName    = notes["guest_name"]
+      // Razorpay refund/payment.failed events usually DON'T carry the original
+      // payment-link's notes, so fall back to the payer's email to find the bed.
+      const payerEmail   = p.payment?.entity?.email ?? ""
+
+      try {
+        let reverted = false
+        if (notionPageId) {
+          reverted = await revertBedAllotment(notionPageId, guestName)
+        }
+        if (!reverted && payerEmail) {
+          reverted = await revertBedAllotmentByEmail(payerEmail, guestName)
+        }
+        console.log(`[webhook] ${event.event}: bed allotment ${reverted ? "reverted to Vacant" : "not reverted (no matching bed hold)"}`)
+        if (!reverted && !notionPageId && !payerEmail) {
+          console.warn(`[webhook] ${event.event}: no notion_page_id or payer email; cannot revert allotment`)
+        }
+      } catch (e) { console.error("[webhook] revert allotment failed:", e) }
       break
     }
 

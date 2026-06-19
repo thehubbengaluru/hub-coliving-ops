@@ -19,6 +19,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
+    // Maintenance requests require an occupied room.
+    if (!room || !room.trim()) {
+      return NextResponse.json({ error: "Maintenance requests require an assigned room." }, { status: 403 })
+    }
+
     const client = new Client({ auth: process.env.NOTION_TOKEN })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

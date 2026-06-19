@@ -1,6 +1,9 @@
 export type Property = 'safina-plaza' | 'peepal-tree'
 export type Floor = '1st' | '2nd' | '3rd' | 'all'
 export type RoomType = 'private' | 'sharing'
+// Canonical room tier — mirrors the Notion "Active Members" Room Type tag.
+// This is the single key that correlates a room with its price.
+export type RoomTier = 'Standard Sharing' | 'Standard Private' | 'Deluxe Sharing' | 'Deluxe Private'
 export type BedStatus = 'occupied' | 'vacant' | 'incoming' | 'blocked' | 'special'
 export type BookingTier = 'weekly' | 'monthly' | 'open-ended'
 export type Entity = 'feazzo' | 'safina-ventures'
@@ -24,6 +27,9 @@ export interface Bed {
   checkIn?: string
   checkOut?: string
   tier?: BookingTier
+  subscriptionId?: string  // Razorpay subscription id, if one has been created
+  tags?: string[]          // guest tags: Long term, HWC, Pet Parent, Special Guest, etc.
+  roomTier?: RoomTier      // Notion "Room Type" tag on this bed page (Standard/Deluxe × Sharing/Private)
 }
 
 export interface Room {
@@ -32,6 +38,7 @@ export interface Room {
   property: Property
   floor: Floor
   type: RoomType
+  roomTier?: RoomTier   // canonical tier from the Notion Room Type tag; drives pricing
   entity: Entity
   beds: Bed[]
   monthlyRate: number

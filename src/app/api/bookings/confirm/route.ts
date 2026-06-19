@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { Client } from "@notionhq/client"
 import { verifyPaymentSignature, getRzpInstance } from "@/lib/razorpay"
-import { checkInGuest, findBedPageId } from "@/lib/notion"
+import { checkInGuest, findBedPageId, BedOccupiedError } from "@/lib/notion"
 
 export const dynamic = "force-dynamic"
 
@@ -182,6 +182,7 @@ export async function POST(req: Request) {
     const parsedBed = roomMatch?.[2] ?? null
 
     const bedPageId = await findBedPageId(property, parsedRoom, parsedBed)
+    let bedConflict = false
     if (bedPageId) {
       const fullName = formData.get("fullName") as string
       const genderField = formData.get("gender") as string
@@ -190,17 +191,29 @@ export async function POST(req: Request) {
       const checkInField = formData.get("checkIn") as string
       const checkOutField = (formData.get("checkOut") as string) || undefined
 
-      await checkInGuest({
-        notionPageId: bedPageId,
-        property,
-        guestName: fullName,
-        gender: genderField.toLowerCase() === "female" ? "female" : "male",
-        phone,
-        email: emailField,
-        checkInDate: checkInField,
-        checkOutDate: checkOutField,
-        monthlyRate: monthlyRateNum,
-      })
+      try {
+        await checkInGuest({
+          notionPageId: bedPageId,
+          property,
+          guestName: fullName,
+          gender: genderField.toLowerCase() === "female" ? "female" : "male",
+          phone,
+          email: emailField,
+          checkInDate: checkInField,
+          checkOutDate: checkOutField,
+          monthlyRate: monthlyRateNum,
+        })
+      } catch (e) {
+        // Bed is still held by another live guest. The guest has already paid,
+        // so we keep their booking record but DO NOT overwrite the occupant.
+        // Flag for manual room assignment by ops instead.
+        if (e instanceof BedOccupiedError) {
+          bedConflict = true
+          console.error("[bookings/confirm] Bed conflict, needs manual assignment:", e.message)
+        } else {
+          throw e
+        }
+      }
     }
 
     // Step 5 — Create Razorpay subscription
@@ -247,6 +260,7 @@ export async function POST(req: Request) {
       ok: true,
       subscriptionId,
       notionPageId: guestPage.id,
+      bedConflict,
     })
   } catch (err) {
     console.error("[api/bookings/confirm]", err)
