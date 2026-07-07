@@ -32,9 +32,8 @@ export default function CookiePolicyPage() {
           {/* Intro */}
           <section>
             <p>
-              This Cookie &amp; Session Policy explains how <strong>Safina Hotels</strong> (Safina Plaza)
-              and <strong>Safina Ventures Private Limited</strong> (Peepal Tree), collectively{" "}
-              <strong>"The Hub"</strong>, use cookies, browser storage, and login sessions on our website
+              This Cookie &amp; Session Policy explains how <strong>Safina Hotels</strong> (Safina Plaza),{" "}
+              <strong>"The Hub"</strong>, uses cookies, browser storage, and login sessions on our website
               and resident portal. It should be read alongside our{" "}
               <a href="/legal/privacy-policy" className="text-[#F9A91F] underline">Privacy Policy</a>.
             </p>

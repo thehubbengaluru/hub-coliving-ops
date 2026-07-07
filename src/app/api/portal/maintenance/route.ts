@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { Client } from "@notionhq/client"
+import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
+import { requirePortalGuest, authErrorResponse } from "@/lib/auth/api-guards"
 
 export const dynamic = "force-dynamic"
 
@@ -7,6 +9,8 @@ const DB_MAINTENANCE = "1d269190-ee9b-8096-a27c-f902861bba4e"
 
 export async function POST(req: Request) {
   try {
+    const { email: sessionEmail } = await requirePortalGuest()
+
     const formData = await req.formData()
     const notionPageId = formData.get("notionPageId") as string
     const guestName = formData.get("guestName") as string
@@ -25,6 +29,14 @@ export async function POST(req: Request) {
     }
 
     const client = new Client({ auth: process.env.NOTION_TOKEN })
+
+    // Ownership: the referenced booking page must belong to the session email.
+    const ref = await client.pages.retrieve({ page_id: notionPageId }) as PageObjectResponse
+    const ownerProp = ref.properties["✉️ Email"] ?? ref.properties["Email"]
+    const ownerEmail = ownerProp?.type === "email" ? (ownerProp.email ?? "") : ""
+    if (!ownerEmail || ownerEmail.trim().toLowerCase() !== sessionEmail) {
+      return NextResponse.json({ error: "This booking is not associated with your account." }, { status: 403 })
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const properties: Record<string, any> = {
@@ -60,6 +72,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[portal/maintenance]", err)
     return NextResponse.json({ error: "Failed to create maintenance ticket" }, { status: 500 })
   }

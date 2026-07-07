@@ -4,11 +4,11 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   LayoutDashboard, Building2, Users, UserCheck, CreditCard,
-  FileText, Wrench, BarChart3, Star, LogOut, Bell
+  FileText, Wrench, BarChart3, Star, LogOut, Bell, Undo2
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { usePropertyScope, type PropertyScope } from "@/lib/property-context"
+import { signOut } from "@/lib/auth/actions"
 
 const navItems = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -16,21 +16,15 @@ const navItems = [
   { href: "/admin/leads", label: "Leads Pipeline", icon: Users, badge: 3 },
   { href: "/admin/guests", label: "Guests", icon: UserCheck },
   { href: "/admin/payments", label: "Payments", icon: CreditCard, badge: 2 },
+  { href: "/admin/refunds", label: "Refunds", icon: Undo2 },
   { href: "/admin/billing", label: "Billing", icon: FileText },
   { href: "/admin/maintenance", label: "Maintenance", icon: Wrench, badge: 4 },
   { href: "/admin/reports", label: "Reports", icon: BarChart3 },
   { href: "/admin/special-bookings", label: "Special Bookings", icon: Star },
 ]
 
-const SCOPES: { value: PropertyScope; label: string }[] = [
-  { value: "all",          label: "All"    },
-  { value: "safina-plaza", label: "Plaza"  },
-  { value: "peepal-tree",  label: "Peepal" },
-]
-
-export default function Sidebar() {
+export default function Sidebar({ email }: { email?: string | null }) {
   const pathname = usePathname()
-  const { scope, setScope } = usePropertyScope()
 
   return (
     <aside className="w-56 shrink-0 hidden lg:flex flex-col h-full border-r border-border bg-card">
@@ -47,24 +41,12 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Property Scope Switcher */}
+      {/* Property */}
       <div className="px-3 pt-2.5 pb-2 border-b border-border">
         <p className="text-[10px] text-muted-foreground mb-1.5 px-0.5 font-medium uppercase tracking-wide">Viewing</p>
-        <div className="flex gap-1 bg-muted rounded-md p-0.5">
-          {SCOPES.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setScope(value)}
-              className={cn(
-                "flex-1 text-[11px] py-1 rounded-[5px] font-medium transition-all duration-150 cursor-pointer",
-                scope === value
-                  ? "bg-foreground text-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 bg-muted rounded-md px-2.5 py-1.5">
+          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-[12px] font-medium text-foreground">Safina Plaza</span>
         </div>
       </div>
 
@@ -111,11 +93,13 @@ export default function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[12px] font-medium text-foreground truncate">Admin</p>
-            <p className="text-[10px] text-muted-foreground truncate">nocode@thehubco.live</p>
+            <p className="text-[10px] text-muted-foreground truncate">{email ?? ""}</p>
           </div>
-          <button className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer p-0.5">
-            <LogOut className="w-3 h-3" />
-          </button>
+          <form action={signOut}>
+            <button type="submit" className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer p-0.5" aria-label="Log out">
+              <LogOut className="w-3 h-3" />
+            </button>
+          </form>
         </div>
       </div>
     </aside>

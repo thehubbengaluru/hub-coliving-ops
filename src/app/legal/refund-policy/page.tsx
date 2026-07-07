@@ -32,8 +32,7 @@ export default function RefundPolicyPage() {
           {/* Intro */}
           <section>
             <p>
-              This Refund Policy applies to all payments made to <strong>Safina Hotels</strong> (Safina Plaza)
-              and <strong>Safina Ventures Private Limited</strong> (Peepal Tree), collectively{" "}
+              This Refund Policy applies to all payments made to <strong>Safina Hotels</strong> (Safina Plaza),{" "}
               <strong>"The Hub"</strong>. Please read this policy carefully before making any payment.
             </p>
           </section>

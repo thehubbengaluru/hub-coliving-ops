@@ -1,4 +1,4 @@
-export type Property = 'safina-plaza' | 'peepal-tree'
+export type Property = 'safina-plaza'
 export type Floor = '1st' | '2nd' | '3rd' | 'all'
 export type RoomType = 'private' | 'sharing'
 // Canonical room tier — mirrors the Notion "Active Members" Room Type tag.
@@ -23,6 +23,7 @@ export interface Bed {
   status: BedStatus
   guestId?: string
   guestName?: string
+  guestEmail?: string
   genderRestriction: Gender
   checkIn?: string
   checkOut?: string

@@ -10,13 +10,9 @@ import type { Property, RoomType, RoomTier } from "./types"
 export const TIER_RATES: Record<Property, Partial<Record<RoomTier, number>>> = {
   "safina-plaza": {
     "Standard Sharing": 21500,
-    "Deluxe Sharing":   30000,
+    "Deluxe Sharing":   25000,
     "Standard Private": 43500,
-    "Deluxe Private":   60000,
-  },
-  "peepal-tree": {
-    "Standard Sharing": 18550,
-    "Standard Private": 39100,
+    "Deluxe Private":   50000,
   },
 }
 
@@ -39,8 +35,7 @@ const TIER_ALIASES: Record<string, RoomTier> = {
   // legacy wording from the public pricing page
   "shared room":      "Standard Sharing",
   "private room":     "Standard Private",
-  // Peepal Tree tags rooms with the bare coarse type (no Standard/Deluxe split,
-  // since it has a single tier each) — treat these as the Standard tier.
+  // Bare coarse type with no Standard/Deluxe split → treat as the Standard tier.
   "sharing":          "Standard Sharing",
   "private":          "Standard Private",
 }

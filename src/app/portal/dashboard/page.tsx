@@ -3,6 +3,13 @@
 import { useEffect, useState, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Loader2, LogOut, User, Wrench, CreditCard, CalendarX } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+import {
+  canCancelBooking, cancellationCutoffISO, CANCELLATION_NOTICE_DAYS,
+  CANCELLATION_REFUND_FRACTION, earliestEarlyCheckoutISO,
+  STAY_DURATIONS, extendStayWindowOpen, daysUntilISO, EXTEND_STAY_WINDOW_DAYS,
+  type StayDurationKey,
+} from "@/lib/stay"
 
 const AMBER = "#F9A91F"
 
@@ -26,6 +33,35 @@ type GuestData = {
 }
 
 type Tab = "info" | "maintenance" | "payments" | "checkout" | "cancel"
+
+type ExtendSchedule = {
+  upfront: { label: string; fromISO: string; toISO: string; days: number; full: boolean; amount: number }[]
+  upfrontAmount: number
+  subscription: { startISO: string; cycles: number | null } | null
+  finalMonth: { fromISO: string; toISO: string; days: number; amount: number } | null
+}
+
+type ExtendOptions = {
+  oldCheckOut: string
+  newCheckOut: string
+  priorStub: { fromISO: string; toISO: string; days: number; amount: number } | null
+  sameRoom: { available: boolean; label: string; monthlyRate: number; schedule: ExtendSchedule; depositTopUp: number }
+  alternatives: { roomNumber: string; bedLabel: string | null; label: string; monthlyRate: number; type: string; schedule: ExtendSchedule; depositTopUp: number }[]
+}
+
+type ExtendResult = {
+  newCheckOut: string
+  roomChosen: string
+  monthlyRate: number
+  rentLink: string | null
+  rentAmount: number
+  depositTopUp: number
+  depositLink: string | null
+  subscriptionUrl: string | null
+  subscriptionStart: string | null
+  subscriptionCycles: number | null
+  finalMonth: { fromISO: string; toISO: string; amount: number } | null
+}
 
 const MAINTENANCE_CATEGORIES = [
   "Electrical",
@@ -107,6 +143,16 @@ function PortalDashboardInner() {
   const [cancelError, setCancelError] = useState<string | null>(null)
 
   // Pay-rent state
+  // Extend stay
+  const [extDuration, setExtDuration] = useState<StayDurationKey | "">("")
+  const [extLoading, setExtLoading] = useState(false)
+  const [extOptions, setExtOptions] = useState<ExtendOptions | null>(null)
+  const [extRoom, setExtRoom] = useState<"same" | number>("same")
+  const [extAccept, setExtAccept] = useState(false)
+  const [extSubmitting, setExtSubmitting] = useState(false)
+  const [extResult, setExtResult] = useState<ExtendResult | null>(null)
+  const [extError, setExtError] = useState<string | null>(null)
+
   const [payingRent, setPayingRent] = useState(false)
   const [payRentError, setPayRentError] = useState<string | null>(null)
   const [rentLinkId, setRentLinkId] = useState<string | null>(null)
@@ -115,57 +161,86 @@ function PortalDashboardInner() {
   const [rentChecking, setRentChecking] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem("portal_guest")
-    if (!stored) { router.replace("/portal"); return }
-    const g: GuestData = JSON.parse(stored)
-    setGuest(g)
-    setContactNumber(g.contactNumber ? String(g.contactNumber) : "")
-    setOrgName(g.orgName ?? "")
-    setOccupation(g.occupation ?? "")
-    setWorkAddress(g.workAddress ?? "")
-    setEmergencyName(g.emergencyName ?? "")
+    let cancelled = false
 
-    // If returning from Razorpay rent payment callback, restore pending link and switch to payments tab
-    const fromRent = searchParams.get("rentReturn") === "1"
-    const savedRentLink = localStorage.getItem(`hub_rent_link_${g.notionPageId}`)
-    if (fromRent && savedRentLink) {
-      try {
-        const { linkId, property } = JSON.parse(savedRentLink) as { linkId: string; property: string }
-        setRentLinkId(linkId)
-        setRentProperty(property)
-        setTab("payments")
-      } catch { /* ignore */ }
+    function applyGuest(g: GuestData) {
+      setGuest(g)
+      setContactNumber(g.contactNumber ? String(g.contactNumber) : "")
+      setOrgName(g.orgName ?? "")
+      setOccupation(g.occupation ?? "")
+      setWorkAddress(g.workAddress ?? "")
+      setEmergencyName(g.emergencyName ?? "")
+      setEmergencyNumber(g.emergencyNumber ?? "")
+      setEmergencyRelation(g.emergencyRelation ?? "")
+      if (g.checkOut) setCoDate(g.checkOut)
     }
-    setEmergencyNumber(g.emergencyNumber ?? "")
-    setEmergencyRelation(g.emergencyRelation ?? "")
-    if (g.checkOut) setCoDate(g.checkOut)
 
-    // Re-fetch fresh data from Notion in background to get updated status/property
-    fetch("/api/portal/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: g.email }),
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(fresh => {
-        if (!fresh) return
-        setGuest(fresh)
-        localStorage.setItem("portal_guest", JSON.stringify(fresh))
-        setContactNumber(fresh.contactNumber ? String(fresh.contactNumber) : "")
-        setOrgName(fresh.orgName ?? "")
-        setOccupation(fresh.occupation ?? "")
-        setWorkAddress(fresh.workAddress ?? "")
-        setEmergencyName(fresh.emergencyName ?? "")
-        setEmergencyNumber(fresh.emergencyNumber ?? "")
-        setEmergencyRelation(fresh.emergencyRelation ?? "")
-        if (fresh.checkOut) setCoDate(fresh.checkOut)
+    function restoreRentReturn(g: GuestData) {
+      const fromRent = searchParams.get("rentReturn") === "1"
+      const savedRentLink = localStorage.getItem(`hub_rent_link_${g.notionPageId}`)
+      if (fromRent && savedRentLink) {
+        try {
+          const { linkId, property } = JSON.parse(savedRentLink) as { linkId: string; property: string }
+          setRentLinkId(linkId)
+          setRentProperty(property)
+          setTab("payments")
+        } catch { /* ignore */ }
+      }
+    }
+
+    async function fetchGuest(email: string): Promise<GuestData | null> {
+      const res = await fetch("/api/portal/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
       })
-      .catch(() => { /* ignore */ })
-  }, [router])
+      return res.ok ? (res.json() as Promise<GuestData>) : null
+    }
 
-  function logout() {
+    async function init() {
+      const stored = localStorage.getItem("portal_guest")
+
+      if (stored) {
+        const g: GuestData = JSON.parse(stored)
+        if (cancelled) return
+        applyGuest(g)
+        restoreRentReturn(g)
+        // Refresh from Notion (source of truth) in the background.
+        const fresh = await fetchGuest(g.email)
+        if (!cancelled && fresh) {
+          localStorage.setItem("portal_guest", JSON.stringify(fresh))
+          applyGuest(fresh)
+        }
+        return
+      }
+
+      // No cached booking (Google sign-in or a new device): derive the guest
+      // from the authenticated Supabase session, then load the Notion booking.
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user?.email) { router.replace("/portal"); return }
+
+      const g = await fetchGuest(user.email)
+      if (!g) {
+        // Authenticated, but no booking exists in Notion for this account.
+        await supabase.auth.signOut()
+        router.replace("/portal?error=nobooking")
+        return
+      }
+      if (cancelled) return
+      localStorage.setItem("portal_guest", JSON.stringify(g))
+      applyGuest(g)
+      restoreRentReturn(g)
+    }
+
+    init()
+    return () => { cancelled = true }
+  }, [router, searchParams])
+
+  async function logout() {
     localStorage.removeItem("portal_guest")
     localStorage.removeItem("portal_profile")
+    try { await createClient().auth.signOut() } catch { /* ignore */ }
     router.replace("/")
   }
 
@@ -239,6 +314,49 @@ function PortalDashboardInner() {
       setCoError(e instanceof Error ? e.message : "Failed to update. Please try again or contact the office.")
     } finally {
       setCoSaving(false)
+    }
+  }
+
+  async function handleExtendPreview(duration: StayDurationKey) {
+    if (!guest) return
+    setExtDuration(duration)
+    setExtOptions(null)
+    setExtRoom("same")
+    setExtError(null)
+    setExtLoading(true)
+    try {
+      const res = await fetch(`/api/portal/extend-stay?email=${encodeURIComponent(guest.email)}&duration=${duration}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Could not check availability")
+      setExtOptions(data as ExtendOptions)
+      if (!(data as ExtendOptions).sameRoom.available) setExtRoom(0)
+    } catch (e) {
+      setExtError(e instanceof Error ? e.message : "Could not check availability")
+    } finally {
+      setExtLoading(false)
+    }
+  }
+
+  async function handleExtendConfirm() {
+    if (!guest || !extOptions || !extDuration) return
+    setExtSubmitting(true)
+    setExtError(null)
+    try {
+      const chosen = extRoom === "same"
+        ? "same"
+        : { roomNumber: extOptions.alternatives[extRoom].roomNumber, bedLabel: extOptions.alternatives[extRoom].bedLabel }
+      const res = await fetch("/api/portal/extend-stay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: guest.email, duration: extDuration, room: chosen, acceptTerms: extAccept }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Extension failed")
+      setExtResult(data as ExtendResult)
+    } catch (e) {
+      setExtError(e instanceof Error ? e.message : "Extension failed")
+    } finally {
+      setExtSubmitting(false)
     }
   }
 
@@ -319,12 +437,11 @@ function PortalDashboardInner() {
     return () => clearInterval(id)
   }, [rentLinkId, rentPaid, checkRentStatus])
 
-  // Minimum checkout date: 1 calendar month from today
-  const minCheckoutDate = (() => {
-    const d = new Date()
-    d.setMonth(d.getMonth() + 1)
-    return d.toISOString().slice(0, 10)
-  })()
+  // Early check-out needs 1 month's notice, and can never go past the booked
+  // end date — extending a stay means re-applying, not pushing this out.
+  const todayISO = new Date().toISOString().slice(0, 10)
+  const minCheckoutDate = earliestEarlyCheckoutISO(todayISO)
+  const maxCheckoutDate = guest?.checkOut || ""
 
   if (!guest) {
     return (
@@ -342,6 +459,13 @@ function PortalDashboardInner() {
   const checkInHappened = checkInDate ? checkInDate <= today : false
   const checkInUpcoming = checkInDate ? checkInDate > today : false
   const isConfirmedBooking = /confirm|paid|incoming|occupied/i.test(guest.status)
+
+  // A cancellation is only possible 31+ days before check-in (50% refund).
+  // Inside that window the action is locked.
+  const cancelAllowed = guest.checkIn ? canCancelBooking(guest.checkIn, todayISO) : false
+  const cancelCutoffLabel = guest.checkIn
+    ? new Date(cancellationCutoffISO(guest.checkIn) + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+    : ""
 
   // Derive a human-readable occupancy label from dates + status.
   function occupancyLabel(): string {
@@ -596,7 +720,7 @@ function PortalDashboardInner() {
                       <span className="text-sm font-normal text-amber-700 ml-1">/mo (Incl. GST)</span>
                     </p>
                     <p className="text-xs text-amber-700">
-                      Monthly subscription is auto-debited on the 1st of each month via Razorpay mandate.
+                      Monthly rent is auto-debited via Razorpay mandate starting 2 days before each month begins. Rent is payable at the agreed tariff up to the 3rd; from the 4th, a late fee of ₹500 per day applies.
                     </p>
                   </>
                 ) : (
@@ -675,12 +799,186 @@ function PortalDashboardInner() {
 
         {/* Tab: Check-out */}
         {tab === "checkout" && (
-          <Section title="Update check-out / notice period">
+          <Section title="Extend stay / early check-out">
             <div className="space-y-5">
+              {/* ── Extend your stay — only opens once the 14-day "check-out
+                  coming up" reminder has gone out, never earlier ── */}
+              {(() => {
+                const todayISO = new Date().toISOString().slice(0, 10)
+                const windowOpen = !!guest.checkOut && extendStayWindowOpen(guest.checkOut, todayISO)
+                const daysLeft = guest.checkOut ? daysUntilISO(guest.checkOut, todayISO) : null
+                if (!extResult && !windowOpen) {
+                  return (
+                    <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 space-y-1">
+                      <p className="text-sm font-semibold text-gray-700">Extend your stay</p>
+                      <p className="text-xs text-gray-500">
+                        {guest.checkOut
+                          ? `Extensions open ${EXTEND_STAY_WINDOW_DAYS} days before your check-out (${new Date(guest.checkOut + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })})${daysLeft != null && daysLeft > 0 ? ` — ${daysLeft - EXTEND_STAY_WINDOW_DAYS} day${daysLeft - EXTEND_STAY_WINDOW_DAYS === 1 ? "" : "s"} to go` : ""}. We'll email you when it's time.`
+                          : "Your check-out date isn't on record — contact the office to extend."}
+                      </p>
+                    </div>
+                  )
+                }
+                return (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 space-y-3">
+                <p className="text-sm font-semibold text-amber-900">Extend your stay</p>
+                {extResult ? (
+                  <div className="space-y-3 text-sm text-amber-900">
+                    <p>
+                      🎉 Extension confirmed — <strong>{extResult.roomChosen}</strong> until{" "}
+                      <strong>{new Date(extResult.newCheckOut + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</strong> at ₹{extResult.monthlyRate.toLocaleString("en-IN")}/mo.
+                      A confirmation email with all payment links is on its way.
+                    </p>
+                    <div className="space-y-2">
+                      {extResult.rentLink && (
+                        <a href={extResult.rentLink} target="_blank" rel="noreferrer" className="block w-full text-center py-2.5 rounded-lg text-sm font-semibold text-black" style={{ backgroundColor: AMBER }}>
+                          Pay extension rent — ₹{extResult.rentAmount.toLocaleString("en-IN")} →
+                        </a>
+                      )}
+                      {extResult.depositLink && (
+                        <a href={extResult.depositLink} target="_blank" rel="noreferrer" className="block w-full text-center py-2.5 rounded-lg text-sm font-semibold text-white bg-gray-800">
+                          Pay deposit top-up — ₹{extResult.depositTopUp.toLocaleString("en-IN")} →
+                        </a>
+                      )}
+                      {extResult.subscriptionUrl && (
+                        <a href={extResult.subscriptionUrl} target="_blank" rel="noreferrer" className="block w-full text-center py-2.5 rounded-lg text-sm font-semibold text-white bg-blue-600">
+                          Authorise auto-debit mandate →
+                        </a>
+                      )}
+                    </div>
+                    {extResult.finalMonth && (
+                      <p className="text-xs text-amber-700">
+                        Your final month ({extResult.finalMonth.fromISO} – {extResult.finalMonth.toISO}) is pro-rated at ₹{extResult.finalMonth.amount.toLocaleString("en-IN")} — a payment link will arrive before that month starts. It is never auto-debited.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-amber-700">
+                      An extension is a <strong>fresh booking with a fresh contract</strong> starting from your current
+                      check-out{guest.checkOut ? ` (${new Date(guest.checkOut + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })})` : ""}.
+                      Your security deposit carries forward. Subject to availability.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {STAY_DURATIONS.map((d) => (
+                        <button
+                          key={d.key}
+                          type="button"
+                          onClick={() => handleExtendPreview(d.key)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${extDuration === d.key ? "text-black border-transparent" : "text-amber-800 border-amber-300 bg-white hover:bg-amber-100"}`}
+                          style={extDuration === d.key ? { backgroundColor: AMBER } : undefined}
+                        >
+                          +{d.label}
+                        </button>
+                      ))}
+                    </div>
+                    {extLoading && <p className="text-xs text-amber-700 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /> Checking availability…</p>}
+                    {extOptions && (() => {
+                      const chosen = extRoom === "same" ? extOptions.sameRoom : extOptions.alternatives[extRoom]
+                      const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+                      return (
+                        <div className="space-y-3 text-sm">
+                          {/* Room choice */}
+                          {extOptions.sameRoom.available ? (
+                            <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                              ✓ {extOptions.sameRoom.label} is available until {fmt(extOptions.newCheckOut)} — you can stay put.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                Your current room is booked by someone else for those dates. Pick an available room:
+                              </p>
+                              {extOptions.alternatives.length === 0 ? (
+                                <p className="text-xs text-gray-500">No rooms are currently available for this window — please contact the office.</p>
+                              ) : (
+                                <div className="grid grid-cols-2 gap-2">
+                                  {extOptions.alternatives.map((o, i) => (
+                                    <button
+                                      key={o.label}
+                                      type="button"
+                                      onClick={() => setExtRoom(i)}
+                                      className={`px-3 py-2 rounded-lg text-xs border text-left transition-colors ${extRoom === i ? "border-transparent text-black" : "border-gray-200 bg-white text-gray-700 hover:border-amber-300"}`}
+                                      style={extRoom === i ? { backgroundColor: AMBER } : undefined}
+                                    >
+                                      <span className="font-semibold">{o.label}</span>
+                                      <br />₹{o.monthlyRate.toLocaleString("en-IN")}/mo
+                                      {o.depositTopUp > 0 && <span className="block opacity-70">+ ₹{o.depositTopUp.toLocaleString("en-IN")} deposit top-up</span>}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Payment plan */}
+                          {chosen && (
+                            <div className="rounded-lg border border-amber-200 bg-white p-3 space-y-1 text-xs text-gray-600">
+                              <p className="font-semibold text-gray-800 text-sm">Payment plan — until {fmt(extOptions.newCheckOut)}</p>
+                              {extOptions.priorStub && (
+                                <div className="flex justify-between">
+                                  <span>Balance of current stay ({extOptions.priorStub.days} days, pro-rated) — due now</span>
+                                  <span>₹{extOptions.priorStub.amount.toLocaleString("en-IN")}</span>
+                                </div>
+                              )}
+                              {chosen.schedule.upfront.map((m, i) => (
+                                <div key={i} className="flex justify-between">
+                                  <span>{m.full ? `${m.label} (full month)` : `${m.label} (${m.days} days, pro-rated)`} — due now</span>
+                                  <span>₹{m.amount.toLocaleString("en-IN")}</span>
+                                </div>
+                              ))}
+                              {chosen.depositTopUp > 0 && (
+                                <div className="flex justify-between">
+                                  <span>Deposit top-up (new room rate) — due now</span>
+                                  <span>₹{chosen.depositTopUp.toLocaleString("en-IN")}</span>
+                                </div>
+                              )}
+                              {chosen.schedule.subscription && (
+                                <div className="flex justify-between">
+                                  <span>Auto-debit from {fmt(chosen.schedule.subscription.startISO)} × {chosen.schedule.subscription.cycles} month{(chosen.schedule.subscription.cycles ?? 0) > 1 ? "s" : ""}</span>
+                                  <span>₹{chosen.monthlyRate.toLocaleString("en-IN")}/mo</span>
+                                </div>
+                              )}
+                              {chosen.schedule.finalMonth && (
+                                <div className="flex justify-between">
+                                  <span>Final month pro-rated ({chosen.schedule.finalMonth.days} days) — by link, later</span>
+                                  <span>₹{chosen.schedule.finalMonth.amount.toLocaleString("en-IN")}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Fresh contract acceptance */}
+                          <label className="flex items-start gap-2 text-xs text-gray-600 cursor-pointer">
+                            <input type="checkbox" checked={extAccept} onChange={(e) => setExtAccept(e.target.checked)} className="mt-0.5" />
+                            <span>
+                              I accept the <a href="/legal/terms-and-conditions" target="_blank" className="underline">Terms &amp; Conditions</a> and House Rules for this new contract, including the payment, late-fee and vacate policy.
+                            </span>
+                          </label>
+
+                          <button
+                            type="button"
+                            disabled={extSubmitting || !extAccept || (!extOptions.sameRoom.available && extOptions.alternatives.length === 0)}
+                            onClick={handleExtendConfirm}
+                            className="w-full py-2.5 rounded-lg text-sm font-semibold text-black flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
+                            style={{ backgroundColor: AMBER }}
+                          >
+                            {extSubmitting ? <><Loader2 className="w-4 h-4 animate-spin" /> Confirming…</> : "Confirm extension & get payment links"}
+                          </button>
+                        </div>
+                      )
+                    })()}
+                    {extError && <p className="text-xs text-red-500">{extError}</p>}
+                  </>
+                )}
+              </div>
+                )
+              })()}
+
               <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 text-sm text-gray-600 space-y-2">
                 <p className="font-medium text-gray-800">Notice period policy</p>
                 <ul className="space-y-1 list-disc list-inside text-xs">
-                  <li>Notice period is <strong>1 calendar month</strong>, served in writing.</li>
+                  <li>You can bring your check-out <strong>forward</strong> with <strong>1 calendar month</strong>&apos;s notice, served in writing.</li>
+                  <li>To stay past your booked end date, use <strong>Extend your stay</strong> above — it&apos;s a fresh contract and your deposit carries forward.</li>
                   <li>Security deposit is returned within <strong>7 working days</strong> after check-out.</li>
                   <li>The deposit cannot be used to offset monthly rent.</li>
                 </ul>
@@ -696,11 +994,13 @@ function PortalDashboardInner() {
                     value={coDate}
                     onChange={e => setCoDate(e.target.value)}
                     min={minCheckoutDate}
+                    max={maxCheckoutDate || undefined}
                     className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:border-transparent transition-all"
                     style={{ "--tw-ring-color": AMBER } as React.CSSProperties}
                   />
                   <p className="mt-1 text-xs text-gray-400">
-                    Earliest possible: {new Date(minCheckoutDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                    Earliest: {new Date(minCheckoutDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                    {maxCheckoutDate && <> · Booked end date: {new Date(maxCheckoutDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</>}
                   </p>
                 </div>
 
@@ -727,16 +1027,29 @@ function PortalDashboardInner() {
               <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700 space-y-2">
                 <p className="font-medium text-red-800">Cancellation policy</p>
                 <ul className="space-y-1 list-disc list-inside text-xs">
-                  <li>A cancellation fee of <strong>₹3,500</strong> applies.</li>
-                  <li>Your security deposit will be refunded minus the cancellation fee within 7 working days.</li>
+                  <li>Cancellations are only possible <strong>{CANCELLATION_NOTICE_DAYS}+ days before check-in</strong>{cancelCutoffLabel && <> (on or before <strong>{cancelCutoffLabel}</strong>)</>}.</li>
+                  <li>Cancel in time and <strong>{Math.round(CANCELLATION_REFUND_FRACTION * 100)}%</strong> of the total amount paid is refunded within 7 working days.</li>
+                  <li>Within {CANCELLATION_NOTICE_DAYS} days of check-in there is <strong>no refund</strong> and the booking can no longer be cancelled.</li>
                   <li>Your bed will be released back to the available pool.</li>
-                  <li>Cancellations are only possible before check-in.</li>
                 </ul>
               </div>
 
               {cancelMsg ? (
                 <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-sm text-green-700">
                   {cancelMsg}
+                </div>
+              ) : !cancelAllowed ? (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-3 rounded-xl text-sm font-semibold text-white bg-red-300 opacity-50 cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    Cancellation closed
+                  </button>
+                  <p className="text-xs text-gray-500 text-center">
+                    The {CANCELLATION_NOTICE_DAYS}-day cancellation window{cancelCutoffLabel && <> (ended {cancelCutoffLabel})</>} has passed. This booking is non-refundable.
+                  </p>
                 </div>
               ) : !cancelConfirm ? (
                 <button
@@ -749,7 +1062,7 @@ function PortalDashboardInner() {
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm text-gray-700 font-medium">
-                    Are you sure? A ₹3,500 cancellation fee will apply and this cannot be undone.
+                    Are you sure? You&apos;ll be refunded {Math.round(CANCELLATION_REFUND_FRACTION * 100)}% of the total paid and this cannot be undone.
                   </p>
                   {cancelError && <p className="text-sm text-red-500">{cancelError}</p>}
                   <div className="flex gap-3">

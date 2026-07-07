@@ -32,9 +32,9 @@ export default function PrivacyPolicyPage() {
           {/* Intro */}
           <section>
             <p>
-              This Privacy Policy describes how <strong>Safina Hotels</strong> (operator of Safina Plaza) and{" "}
-              <strong>Safina Ventures Private Limited</strong> (operator of Peepal Tree), collectively referred to as{" "}
-              <strong>"The Hub", "we", "our"</strong> or <strong>"us"</strong>, collect, use, store, and share
+              This Privacy Policy describes how <strong>Safina Hotels</strong> (operator of Safina Plaza),
+              referred to as{" "}
+              <strong>"The Hub", "we", "our"</strong> or <strong>"us"</strong>, collects, uses, stores, and shares
               personal information when you interact with our website, booking platform, or co-living facilities
               located in Bengaluru, Karnataka, India.
             </p>
@@ -282,8 +282,6 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-xl font-bold text-gray-900 mb-3">10. Contact Us</h2>
             <div className="bg-gray-50 rounded-xl p-5 text-sm space-y-1">
               <p className="font-semibold text-gray-900">Safina Hotels (Safina Plaza)</p>
-              <p>Email: <a href="mailto:hello@thehubco.live" className="text-[#F9A91F] underline">hello@thehubco.live</a></p>
-              <p className="mt-3 font-semibold text-gray-900">Safina Ventures Private Limited (Peepal Tree)</p>
               <p>Email: <a href="mailto:hello@thehubco.live" className="text-[#F9A91F] underline">hello@thehubco.live</a></p>
               <p className="mt-3 text-gray-500">Jurisdiction: Bengaluru, Karnataka, India</p>
             </div>

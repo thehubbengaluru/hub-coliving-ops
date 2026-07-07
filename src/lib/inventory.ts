@@ -7,7 +7,7 @@ export type AvailabilityStatus = "Vacant" | "Occupied" | "Blocked"
 
 export interface BedListing {
   id:                   string
-  property:             "safina-plaza" | "peepal-tree"
+  property:             "safina-plaza"
   roomNumber:           string
   bedLabel:             string | null  // "A" | "B" | null for single/whole-room listings
   category:             BedCategory
@@ -21,21 +21,18 @@ export interface BedListing {
   weeklyRate:           number
   // For a vacant bed in a SHARING room: the gender of the existing occupant in
   // the other bed, or null if the room is empty (no gender restriction applies).
-  roommateGender?:      "male" | "female" | null
+  // "other" is preserved so a non-binary occupant only matches another "other".
+  roommateGender?:      "male" | "female" | "other" | null
 }
 
 // ─── Price matrix (INR, GST inclusive) ───────────────────────────────────────
 
-const RATES: Record<"safina-plaza" | "peepal-tree", Partial<Record<`${BedCategory}-${BedSize}`, { monthly: number; weekly: number }>>> = {
+const RATES: Record<"safina-plaza", Partial<Record<`${BedCategory}-${BedSize}`, { monthly: number; weekly: number }>>> = {
   "safina-plaza": {
-    "Premium-Double":   { monthly: 30000, weekly: 25000 },
-    "Premium-Single":   { monthly: 60000, weekly: 25000 },
+    "Premium-Double":   { monthly: 25000, weekly: 25000 },
+    "Premium-Single":   { monthly: 50000, weekly: 25000 },
     "Standard-Double":  { monthly: 21500, weekly: 25000 },
     "Standard-Single":  { monthly: 43500, weekly: 25000 },
-  },
-  "peepal-tree": {
-    "Standard-Double":  { monthly: 18550, weekly: 25000 },
-    "Standard-Single":  { monthly: 39100, weekly: 25000 },
   },
 }
 
@@ -136,38 +133,9 @@ export const safinaPlazaBeds: BedListing[] = [
   bed("safina-plaza", "318", null, "Standard", "Single", "Occupied", null),
 ]
 
-// ─── Peepal Tree ─────────────────────────────────────────────────────────────
-// 1st floor — 101–105 | 2nd floor — 201–205 | 3rd floor — 301–302
-// "Private" maps to Single, "Sharing" maps to Double
-
-export const peepalTreeBeds: BedListing[] = [
-  // 1F
-  bed("peepal-tree", "101",  null, "Standard", "Single", "Occupied", null),
-  bed("peepal-tree", "102",  null, "Standard", "Single", "Occupied", "2026-06-30"),
-  bed("peepal-tree", "103",  "A",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "103",  "B",  "Standard", "Double", "Occupied", "2026-06-30"),
-  bed("peepal-tree", "104",  "A",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "104",  "B",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "105",  "A",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "105",  "B",  "Standard", "Double", "Occupied", null),
-  // 2F
-  bed("peepal-tree", "201",  "A",  "Standard", "Double", "Vacant",   null),
-  bed("peepal-tree", "201",  "B",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "202",  null, "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "203",  "A",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "203",  "B",  "Standard", "Double", "Occupied", "2026-06-30"),
-  bed("peepal-tree", "204",  "A",  "Standard", "Double", "Occupied", null),
-  bed("peepal-tree", "204",  "B",  "Standard", "Double", "Occupied", "2026-06-30"),
-  bed("peepal-tree", "205",  null, "Standard", "Double", "Blocked",  "2026-07-25"),
-  // 3F
-  bed("peepal-tree", "301",  null, "Standard", "Single", "Vacant",   null),
-  bed("peepal-tree", "302",  "A",  "Standard", "Single", "Occupied", null),
-  bed("peepal-tree", "302",  "B",  "Standard", "Single", "Occupied", null),
-]
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-export const allBeds: BedListing[] = [...safinaPlazaBeds, ...peepalTreeBeds]
+export const allBeds: BedListing[] = [...safinaPlazaBeds]
 
 function todayMidnight(): Date {
   const t = new Date(); t.setHours(0, 0, 0, 0); return t

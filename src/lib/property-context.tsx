@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 
-export type PropertyScope = "all" | "safina-plaza" | "peepal-tree"
+export type PropertyScope = "all" | "safina-plaza"
 
 interface PropertyContextValue {
   scope: PropertyScope
@@ -19,7 +19,7 @@ export function PropertyProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = localStorage.getItem("hub-ops-property")
-    if (stored === "safina-plaza" || stored === "peepal-tree" || stored === "all") {
+    if (stored === "safina-plaza" || stored === "all") {
       setScope(stored as PropertyScope)
     }
   }, [])

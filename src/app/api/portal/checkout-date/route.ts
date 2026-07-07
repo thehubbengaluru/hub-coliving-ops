@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import { Client, isFullPage } from "@notionhq/client"
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
-import { findConflictingBookingsOnRoom } from "@/lib/notion"
+import { requirePortalGuest, authErrorResponse } from "@/lib/auth/api-guards"
+import { earliestEarlyCheckoutISO, istTodayISO, EARLY_CHECKOUT_NOTICE_MONTHS } from "@/lib/stay"
 
 export const dynamic = "force-dynamic"
 
@@ -20,51 +21,53 @@ async function queryByEmail(notion: Client, dataSourceId: string, email: string)
 
 export async function PATCH(req: Request) {
   try {
+    const { email: sessionEmail } = await requirePortalGuest()
+
     const { notionPageId, checkOutDate } = await req.json()
 
     if (!notionPageId || !checkOutDate) {
       return NextResponse.json({ error: "Missing notionPageId or checkOutDate" }, { status: 400 })
     }
 
-    // Validate: must be at least 1 calendar month from today
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const minNoticeDate = new Date(today.getFullYear(), today.getMonth() + 1, today.getDate())
-    const requested = new Date(checkOutDate)
-
-    if (requested < minNoticeDate) {
+    // Validate: at least 1 calendar month notice from today (IST). ISO-string
+    // comparison avoids the UTC/local-midnight + month-rollover distortion of
+    // constructing Date objects with different midnight bases.
+    const earliest = earliestEarlyCheckoutISO(istTodayISO())
+    if (checkOutDate < earliest) {
       return NextResponse.json({
-        error: `Notice period is 1 calendar month. Earliest check-out date is ${minNoticeDate.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}.`,
+        error: `Notice period is ${EARLY_CHECKOUT_NOTICE_MONTHS} calendar month. Earliest check-out date is ${new Date(earliest + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}.`,
       }, { status: 400 })
     }
 
     const notion = new Client({ auth: process.env.NOTION_TOKEN })
 
-    // Read the existing page to get the check-in date
+    // Read the existing page to get the booked check-out date.
     const page = await notion.pages.retrieve({ page_id: notionPageId }) as PageObjectResponse
 
-    // Conflict check: look for any other active booking on the same room
-    // whose check-in date falls within the extended window.
-    const roomProp = page.properties["Room"]
-    const roomText = roomProp?.type === "rich_text"
-      ? roomProp.rich_text.map((r: { plain_text: string }) => r.plain_text).join("").trim()
-      : null
+    // Ownership: the page must belong to the authenticated session email.
+    const ownerProp = page.properties["✉️ Email"] ?? page.properties["Email"]
+    const ownerEmail = ownerProp?.type === "email" ? (ownerProp.email ?? "") : ""
+    if (!ownerEmail || ownerEmail.trim().toLowerCase() !== sessionEmail) {
+      return NextResponse.json({ error: "This booking is not associated with your account." }, { status: 403 })
+    }
+
+    // Only an active booking can set an early-checkout date.
+    const statusProp = page.properties["Status"]
+    const status = statusProp?.type === "select" ? (statusProp.select?.name ?? "") : ""
+    if (/cancelled|checked-out/i.test(status)) {
+      return NextResponse.json({ error: `This booking is ${status.toLowerCase()} and can no longer be modified.` }, { status: 400 })
+    }
 
     const existingCheckoutProp = page.properties["Check Out Date "] ?? page.properties["Check Out Date"]
     const existingCheckout = existingCheckoutProp?.type === "date" ? (existingCheckoutProp.date?.start ?? null) : null
 
-    if (roomText && existingCheckout && checkOutDate > existingCheckout) {
-      const conflicts = await findConflictingBookingsOnRoom({
-        room: roomText,
-        afterDate: existingCheckout,
-        beforeDate: checkOutDate,
-        excludePageId: notionPageId,
-      })
-      if (conflicts.length > 0) {
-        return NextResponse.json({
-          error: `Your room has an upcoming booking that starts before your requested check-out date, so we can't extend this stay automatically. Please contact the office — we'll do our best to find you another room.`,
-          conflict: true,
-        }, { status: 409 })
-      }
+    // Stays are capped at the booked end date. Extending is not self-service —
+    // a guest must re-apply (the deposit carries forward to the new tenancy).
+    // This endpoint only ever brings a check-out *forward* (early check-out).
+    if (existingCheckout && checkOutDate > existingCheckout) {
+      return NextResponse.json({
+        error: `You can't extend your stay here — your booked check-out is ${new Date(existingCheckout + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}. To stay longer, re-apply for a new tenancy (your deposit carries forward).`,
+      }, { status: 400 })
     }
 
     // Build the update only from properties that actually exist on this page, so
@@ -102,9 +105,8 @@ export async function PATCH(req: Request) {
 
     if (email) {
       const dsPlaza = process.env.NOTION_DS_PLAZA!
-      const dsPeepal = process.env.NOTION_DS_PEEPAL!
 
-      for (const ds of [dsPlaza, dsPeepal]) {
+      for (const ds of [dsPlaza]) {
         try {
           const bedPage = await queryByEmail(notion, ds, email)
           if (bedPage) {
@@ -128,6 +130,8 @@ export async function PATCH(req: Request) {
       message: `Check-out date set to ${new Date(checkOutDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}. Notice period begins today.`,
     })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[portal/checkout-date]", err)
     const detail = err instanceof Error ? err.message : "Unknown error"
     return NextResponse.json({ error: `Failed to update check-out date: ${detail}` }, { status: 500 })

@@ -24,7 +24,7 @@ export default function CancellationPolicyPage() {
           <h1 className="text-4xl font-bold text-gray-900 mb-4" style={{ fontFamily: "var(--font-heading)" }}>
             Cancellation Policy
           </h1>
-          <p className="text-gray-500 text-sm">Last updated: 19 June 2026 &nbsp;·&nbsp; Effective: 19 June 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: 24 June 2026 &nbsp;·&nbsp; Effective: 24 June 2026</p>
         </div>
 
         <div className="space-y-8 text-gray-700 leading-relaxed text-sm">
@@ -32,8 +32,7 @@ export default function CancellationPolicyPage() {
           {/* Intro */}
           <section>
             <p>
-              This Cancellation Policy applies to all bookings at <strong>Safina Hotels</strong> (Safina Plaza)
-              and <strong>Safina Ventures Private Limited</strong> (Peepal Tree), collectively{" "}
+              This Cancellation Policy applies to all bookings at <strong>Safina Hotels</strong> (Safina Plaza),{" "}
               <strong>"The Hub"</strong>. It sets out the rules for cancelling a booking before check-in,
               and for vacating before the end of a stay.
             </p>
@@ -49,35 +48,29 @@ export default function CancellationPolicyPage() {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="text-left px-4 py-3 font-semibold text-gray-900">Scenario</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-900">Deposit</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-900">Maintenance Fee</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-900">Outcome</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   <tr>
-                    <td className="px-4 py-3">Cancel before check-in (7+ days notice)</td>
-                    <td className="px-4 py-3 text-green-700 font-medium">Full refund</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Non-refundable</td>
+                    <td className="px-4 py-3">Cancel 31+ days before check-in</td>
+                    <td className="px-4 py-3 text-green-700 font-medium">50% of total paid refunded</td>
                   </tr>
                   <tr className="bg-gray-50">
-                    <td className="px-4 py-3">Cancel before check-in (&lt;7 days notice)</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Forfeited</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Non-refundable</td>
+                    <td className="px-4 py-3">Cancel within 31 days of check-in</td>
+                    <td className="px-4 py-3 text-red-600 font-medium">Not permitted · no refund</td>
                   </tr>
                   <tr>
-                    <td className="px-4 py-3">Early exit with full 1-month notice</td>
-                    <td className="px-4 py-3 text-green-700 font-medium">Refunded (less deductions)</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Non-refundable</td>
+                    <td className="px-4 py-3">Early exit during stay (1-month notice)</td>
+                    <td className="px-4 py-3 text-amber-700 font-medium">Deposit refunded less deductions</td>
                   </tr>
                   <tr className="bg-gray-50">
-                    <td className="px-4 py-3">Early exit without notice / partial notice</td>
-                    <td className="px-4 py-3 text-amber-700 font-medium">Shortfall deducted</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Non-refundable</td>
+                    <td className="px-4 py-3">Early exit without full notice</td>
+                    <td className="px-4 py-3 text-amber-700 font-medium">Notice shortfall deducted from deposit</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3">Eviction (misconduct / rule violation)</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Forfeited</td>
-                    <td className="px-4 py-3 text-red-600 font-medium">Non-refundable</td>
+                    <td className="px-4 py-3 text-red-600 font-medium">Deposit forfeited</td>
                   </tr>
                 </tbody>
               </table>
@@ -92,24 +85,28 @@ export default function CancellationPolicyPage() {
 
             <div className="space-y-4">
               <div className="border border-green-200 bg-green-50 rounded-xl p-4">
-                <p className="font-semibold text-green-800 mb-1">7 or more days before check-in</p>
+                <p className="font-semibold text-green-800 mb-1">31 or more days before check-in</p>
                 <p className="text-green-700">
-                  Your security deposit will be refunded in full within 7 working days.
-                  The Maintenance Fee (₹2,000) is non-refundable.
+                  You may cancel and receive a refund of <strong>50% of the total amount paid</strong> (deposit,
+                  maintenance fee and any rent paid to secure the room) within 7 working days. The remaining 50%
+                  is the cancellation fee. The exact refund amount and the cut-off date are shown to you at the
+                  time of booking.
                 </p>
               </div>
 
               <div className="border border-red-200 bg-red-50 rounded-xl p-4">
-                <p className="font-semibold text-red-800 mb-1">Less than 7 days before check-in</p>
+                <p className="font-semibold text-red-800 mb-1">Within 31 days of check-in</p>
                 <p className="text-red-700">
-                  Your security deposit is forfeited. The Maintenance Fee is also non-refundable.
-                  This reflects the cost of holding the accommodation and turning away other potential guests.
+                  Cancellation is <strong>not possible</strong> and no refund is due. This reflects the cost of
+                  holding the accommodation and turning away other potential guests. The cancel option is
+                  disabled in your resident portal once this window begins.
                 </p>
               </div>
             </div>
 
             <p className="mt-4">
-              To cancel, notify us in writing at{" "}
+              The cancellation cut-off is the date <strong>31 days before your check-in date</strong>. To cancel,
+              use the resident portal or notify us in writing at{" "}
               <a href="mailto:hello@thehubco.live" className="text-[#F9A91F] underline">hello@thehubco.live</a>{" "}
               with your name and booking reference. Cancellations are effective from the date we receive
               written notice.
@@ -120,10 +117,19 @@ export default function CancellationPolicyPage() {
 
           {/* 2 */}
           <section>
-            <h2 className="text-lg font-bold text-gray-900 mb-3">2. Notice Period During Stay</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-3">2. Stay Length & Notice Period</h2>
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4">
+              <p className="font-semibold text-gray-900 mb-1">Maximum stay: 4 months</p>
+              <p className="text-gray-600">
+                Every co-living stay is booked for a fixed term of up to <strong>4 months</strong> on a monthly
+                billing cycle, with the check-out date set at booking. To stay longer you simply{" "}
+                <strong>re-apply</strong> for a new tenancy in any available room — your security deposit carries
+                forward to the new contract. Stays cannot be extended past the booked check-out date from the portal.
+              </p>
+            </div>
             <p className="mb-3">
-              All residents must provide a minimum of <strong>1 full calendar month's written notice</strong>{" "}
-              before vacating. Notice must be:
+              To leave <strong>before</strong> your booked check-out date, all residents must provide a minimum of{" "}
+              <strong>1 full calendar month&apos;s written notice</strong>. Notice must be:
             </p>
             <ul className="list-disc pl-5 space-y-2 mb-4">
               <li>Submitted through the resident portal, or</li>
@@ -170,7 +176,7 @@ export default function CancellationPolicyPage() {
             <h2 className="text-lg font-bold text-gray-900 mb-3">4. No-Show</h2>
             <p>
               If you do not check in on the confirmed date and do not communicate with us, your booking will
-              be treated as a last-minute cancellation (&lt;7 days) and your deposit will be forfeited. We
+              be treated as a within-31-days cancellation and no refund will be due. We
               will attempt to contact you on the check-in day before taking this action.
             </p>
           </section>

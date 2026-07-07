@@ -58,7 +58,7 @@ export default function LegalIndexPage() {
           </h1>
           <p className="text-gray-500">
             Our legal documents for residents, guests, and visitors. All documents are governed by Indian law
-            and apply to both <strong>Safina Plaza</strong> and <strong>Peepal Tree</strong>.
+            and apply to <strong>Safina Plaza</strong>.
           </p>
         </div>
 

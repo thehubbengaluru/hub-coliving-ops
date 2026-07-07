@@ -2,11 +2,11 @@ import Razorpay from "razorpay"
 import crypto from "crypto"
 import type { Property } from "./types"
 
-function getClient(property: Property) {
-  const isPlaza = property === "safina-plaza"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function getClient(_property: Property) {
   return new Razorpay({
-    key_id:     isPlaza ? process.env.RZP_KEY_ID_PLAZA!     : process.env.RZP_KEY_ID_PEEPAL!,
-    key_secret: isPlaza ? process.env.RZP_KEY_SECRET_PLAZA! : process.env.RZP_KEY_SECRET_PEEPAL!,
+    key_id:     process.env.RZP_KEY_ID_PLAZA!,
+    key_secret: process.env.RZP_KEY_SECRET_PLAZA!,
   })
 }
 
@@ -32,6 +32,8 @@ export async function createDepositLink({
   notionPageId,
   zohoRetainerId,
   callbackUrl,
+  description,
+  expireByUnix,
 }: {
   property: Property
   guestName: string
@@ -41,29 +43,35 @@ export async function createDepositLink({
   notionPageId?: string
   zohoRetainerId?: string
   callbackUrl?: string
+  description?: string  // override for no-deposit flows (e.g. exploratory week)
+  expireByUnix?: number // unix seconds — link expires and the booking is void (Razorpay minimum: 15 min out)
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
-  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
+  const propertyLabel = "Safina Plaza"
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const link = await (rzp.paymentLink as any).create({
     amount: Math.round(amount * 100),
     currency: "INR",
-    description: `Security Deposit — ${propertyLabel}`,
+    description: description ?? `Security Deposit — ${propertyLabel}`,
     customer: { name: guestName, email, contact: phone },
     notify: { sms: true, email: true },
     reminder_enable: true,
     ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),
+    ...(expireByUnix ? { expire_by: expireByUnix } : {}),
     notes: { property, type: "security_deposit", guest_name: guestName, notion_page_id: notionPageId ?? "", zoho_retainer_id: zohoRetainerId ?? "" },
   })
 
   return link as RazorpayLink
 }
 
-// One-off rent payment link (manual rent payment from the guest portal — distinct
-// from the auto-debit subscription mandate).
+// One-off rent payment link (manual rent payment from the guest portal, the
+// final pro-rated month, or a dunning reissue — distinct from the auto-debit
+// subscription mandate). rentMonth ("YYYY-MM") rides in the notes so the daily
+// dunning sweep can compute the late fee against the month the rent is FOR,
+// not whatever month the link happens to be reissued in.
 export async function createRentPaymentLink({
-  property, guestName, email, phone, amount, description, notionPageId, callbackUrl,
+  property, guestName, email, phone, amount, description, notionPageId, callbackUrl, rentMonth,
 }: {
   property: Property
   guestName: string
@@ -73,9 +81,10 @@ export async function createRentPaymentLink({
   description?: string
   notionPageId?: string
   callbackUrl?: string
+  rentMonth?: string
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
-  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
+  const propertyLabel = "Safina Plaza"
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const link = await (rzp.paymentLink as any).create({
     amount: Math.round(amount * 100),
@@ -85,7 +94,10 @@ export async function createRentPaymentLink({
     notify: { sms: true, email: true },
     reminder_enable: true,
     ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),
-    notes: { property, type: "rent", guest_name: guestName, notion_page_id: notionPageId ?? "" },
+    notes: {
+      property, type: "rent", guest_name: guestName, notion_page_id: notionPageId ?? "",
+      ...(rentMonth ? { rent_month: rentMonth } : {}),
+    },
   })
   return link as RazorpayLink
 }
@@ -150,12 +162,66 @@ export async function createProRatedLink({
   return link as RazorpayLink
 }
 
+// One-off miscellaneous fee link (failed-inspection ₹2,500, key replacement
+// ₹3,000/key, damages, etc.). notes.type = "fee" so the webhook records the
+// payment + notifies finance but applies NO deposit/rent/dunning side effects.
+export async function createFeeLink({
+  property, guestName, email, phone, amount, description, notionPageId, callbackUrl,
+}: {
+  property: Property
+  guestName: string
+  email: string
+  phone: string
+  amount: number
+  description: string
+  notionPageId?: string
+  callbackUrl?: string
+}): Promise<RazorpayLink> {
+  const rzp = getClient(property)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const link = await (rzp.paymentLink as any).create({
+    amount: Math.round(amount * 100),
+    currency: "INR",
+    description,
+    customer: { name: guestName, email, contact: phone },
+    notify: { sms: true, email: true },
+    reminder_enable: true,
+    ...(callbackUrl ? { callback_url: callbackUrl, callback_method: "get" } : {}),
+    notes: { property, type: "fee", guest_name: guestName, notion_page_id: notionPageId ?? "" },
+  })
+  return link as RazorpayLink
+}
+
+/** Cancel a live payment link (before reissuing it with an updated late fee). Best-effort. */
+export async function cancelPaymentLink(property: Property, linkId: string): Promise<boolean> {
+  try {
+    const rzp = getClient(property)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (rzp.paymentLink as any).cancel(linkId)
+    return true
+  } catch (e) {
+    // Already paid/cancelled links can't be cancelled — treat as non-fatal.
+    console.warn("[cancelPaymentLink] failed for", linkId, e)
+    return false
+  }
+}
+
 export async function getPaymentLinkStatus(property: Property, linkId: string): Promise<string | null> {
+  return (await fetchPaymentLink(property, linkId))?.status ?? null
+}
+
+/** Full payment-link lookup: status + URL + our notes (rent_month etc.). null when unfetchable. */
+export async function fetchPaymentLink(property: Property, linkId: string): Promise<{
+  status: string
+  short_url: string
+  notes: Record<string, string>
+} | null> {
   try {
     const rzp = getClient(property)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const link = await (rzp.paymentLink as any).fetch(linkId)
-    return (link?.status as string) ?? null
+    if (!link?.status) return null
+    return { status: link.status as string, short_url: (link.short_url as string) ?? "", notes: (link.notes as Record<string, string>) ?? {} }
   } catch {
     return null
   }
@@ -168,6 +234,8 @@ export async function createRentSubscription({
   phone,
   monthlyRate,
   checkInDate,
+  startISO,
+  totalCount,
   zohoInvoiceId,
 }: {
   property: Property
@@ -175,16 +243,34 @@ export async function createRentSubscription({
   email: string
   phone: string
   monthlyRate: number
-  checkInDate?: string  // ISO date string; subscription starts 1st of month after this
+  checkInDate?: string  // ISO date string; rent month = month after this (legacy fallback when startISO absent)
+  startISO?: string     // first day (YYYY-MM-01) of the first auto-debited rent month — from computeRentSchedule
+  totalCount?: number | null // exact number of monthly cycles (maps the sub to the check-out date); null/undefined → long-stop cap
   zohoInvoiceId?: string
 }): Promise<RazorpaySubscription> {
   const rzp = getClient(property)
-  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
+  const propertyLabel = "Safina Plaza"
 
-  // Subscription starts 1st of month after check-in (or next month from now if not provided)
-  const base = checkInDate ? new Date(checkInDate + "T00:00:00") : new Date()
-  const startAt = new Date(base.getFullYear(), base.getMonth() + 1, 1)
-  const startAtUnix = Math.floor(startAt.getTime() / 1000)
+  // Auto-debit anchors on the 2nd-last day of the month BEFORE the rent month:
+  // 2 days of buffer ahead of the 1st plus the 3-day grace window gives
+  // Razorpay's ~5-day retry cycle room to finish before the per-day late fee
+  // starts on the 4th. Falls back to the 1st of the rent month when the anchor
+  // is already in the past (e.g. booking confirmed on the 30th/31st), and to
+  // "1 hour from now" if even that has passed.
+  let firstOfRentMonth: Date
+  if (startISO) {
+    firstOfRentMonth = new Date(startISO + "T00:00:00")
+  } else {
+    const base = checkInDate ? new Date(checkInDate + "T00:00:00") : new Date()
+    firstOfRentMonth = new Date(base.getFullYear(), base.getMonth() + 1, 1)
+  }
+  const anchor = new Date(firstOfRentMonth)
+  anchor.setDate(anchor.getDate() - 2)
+
+  const minStart = Date.now() + 60 * 60 * 1000
+  let startAt = anchor
+  if (startAt.getTime() < minStart) startAt = firstOfRentMonth
+  const startAtUnix = Math.floor(Math.max(startAt.getTime(), minStart) / 1000)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const plan = await (rzp.plans as any).create({
@@ -205,7 +291,11 @@ export async function createRentSubscription({
     plan_id: plan.id,
     customer_notify: 1,
     quantity: 1,
-    total_count: 120, // 10-year cap
+    // Exact cycle count maps the subscription to the check-out date — it stops
+    // by itself after the last fully-covered month (a partial final month is
+    // collected by payment link instead, since Razorpay can't pro-rate a
+    // cycle). Long-stop cap only for open-ended admin flows.
+    total_count: totalCount ?? 120,
     start_at: startAtUnix,
     notify_info: { notify_phone: phone, notify_email: email },
     notes: {
@@ -221,21 +311,60 @@ export async function createRentSubscription({
   return sub as RazorpaySubscription
 }
 
-export function verifyWebhookSignature(rawBody: string, signature: string, secret: string): boolean {
-  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex")
-  return expected === signature
+/** Issue a refund against a captured payment. amount is in INR (rupees); omit
+ * for a full refund. Returns the refund id/status. Throws on API failure so the
+ * caller can mark the ledger row 'failed'. */
+export async function createRefund(
+  property: Property,
+  paymentId: string,
+  amountInr: number | null,
+  notes?: Record<string, string>,
+): Promise<{ id: string; status: string; amount: number }> {
+  const rzp = getClient(property)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload: any = { speed: "normal", ...(notes ? { notes } : {}) }
+  if (amountInr != null) payload.amount = Math.round(amountInr * 100)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const refund = await (rzp.payments as any).refund(paymentId, payload)
+  return { id: refund.id as string, status: (refund.status as string) ?? "processed", amount: (refund.amount as number) ?? 0 }
 }
 
-export function getRzpInstance(property: "safina-plaza" | "peepal-tree") {
+/** Cancel a subscription (e.g. after a room move, before creating a new mandate
+ * at the new rate). Best-effort — a already-cancelled/completed sub is fine. */
+export async function cancelSubscription(property: Property, subscriptionId: string, cancelAtCycleEnd = false): Promise<boolean> {
+  try {
+    const rzp = getClient(property)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (rzp.subscriptions as any).cancel(subscriptionId, cancelAtCycleEnd)
+    return true
+  } catch (e) {
+    console.warn("[cancelSubscription] failed for", subscriptionId, e)
+    return false
+  }
+}
+
+export function verifyWebhookSignature(rawBody: string, signature: string, secret: string): boolean {
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex")
+  // Constant-time compare to avoid leaking the signature via timing. Both are
+  // hex strings of equal length on a match; guard unequal lengths first since
+  // timingSafeEqual throws on a length mismatch.
+  const a = Buffer.from(expected, "utf8")
+  const b = Buffer.from(signature, "utf8")
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
+
+export function getRzpInstance(property: Property) {
   return getClient(property)
 }
 
-export function getPublicKey(property: "safina-plaza" | "peepal-tree"): string {
-  return property === "safina-plaza" ? process.env.RZP_KEY_ID_PLAZA! : process.env.RZP_KEY_ID_PEEPAL!
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function getPublicKey(_property: Property): string {
+  return process.env.RZP_KEY_ID_PLAZA!
 }
 
-export function verifyPaymentSignature(orderId: string, paymentId: string, signature: string, property: "safina-plaza" | "peepal-tree"): boolean {
-  const secret = property === "safina-plaza" ? process.env.RZP_KEY_SECRET_PLAZA! : process.env.RZP_KEY_SECRET_PEEPAL!
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function verifyPaymentSignature(orderId: string, paymentId: string, signature: string, _property: Property): boolean {
+  const secret = process.env.RZP_KEY_SECRET_PLAZA!
   const expected = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex")
   return expected === signature
 }

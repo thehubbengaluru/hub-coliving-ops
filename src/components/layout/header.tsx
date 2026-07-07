@@ -11,11 +11,11 @@ import {
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
-import { usePropertyScope, type PropertyScope } from "@/lib/property-context"
+import { signOut } from "@/lib/auth/actions"
 
 const titles: Record<string, { title: string; subtitle: string }> = {
   "/admin/dashboard":       { title: "Dashboard",          subtitle: "Overview of Hub Co-Living operations" },
-  "/admin/rooms":           { title: "Room Board",          subtitle: "Live occupancy across all properties" },
+  "/admin/rooms":           { title: "Room Board",          subtitle: "Live occupancy at Safina Plaza" },
   "/admin/leads":           { title: "Leads Pipeline",      subtitle: "Track prospects from inquiry to check-in" },
   "/admin/guests":          { title: "Guests",              subtitle: "Active members and booking details" },
   "/admin/payments":        { title: "Payments",            subtitle: "Invoice tracking and payment recovery" },
@@ -37,15 +37,8 @@ const navItems = [
   { href: "/admin/special-bookings",label: "Special Bookings", icon: Star },
 ]
 
-const SCOPES: { value: PropertyScope; label: string }[] = [
-  { value: "all",          label: "All"    },
-  { value: "safina-plaza", label: "Plaza"  },
-  { value: "peepal-tree",  label: "Peepal" },
-]
-
-function MobileNav({ onClose }: { onClose: () => void }) {
+function MobileNav({ onClose, email }: { onClose: () => void; email?: string | null }) {
   const pathname = usePathname()
-  const { scope, setScope } = usePropertyScope()
 
   return (
     <div className="flex flex-col h-full">
@@ -60,24 +53,12 @@ function MobileNav({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {/* Property scope switcher */}
+      {/* Property */}
       <div className="px-3 pt-2.5 pb-2 border-b border-border">
         <p className="text-[10px] text-muted-foreground mb-1.5 px-0.5 font-medium uppercase tracking-wide">Viewing</p>
-        <div className="flex gap-1 bg-muted rounded-md p-0.5">
-          {SCOPES.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setScope(value)}
-              className={cn(
-                "flex-1 text-[11px] py-1.5 rounded-[5px] font-medium transition-all duration-150 cursor-pointer",
-                scope === value
-                  ? "bg-foreground text-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 bg-muted rounded-md px-2.5 py-2">
+          <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+          <span className="text-[13px] font-medium text-foreground">Safina Plaza</span>
         </div>
       </div>
 
@@ -112,18 +93,20 @@ function MobileNav({ onClose }: { onClose: () => void }) {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-medium text-foreground truncate">Admin</p>
-            <p className="text-[11px] text-muted-foreground truncate">nocode@thehubco.live</p>
+            <p className="text-[11px] text-muted-foreground truncate">{email ?? ""}</p>
           </div>
-          <button className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer p-1.5" aria-label="Log out">
-            <LogOut className="w-4 h-4" />
-          </button>
+          <form action={signOut}>
+            <button type="submit" className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer p-1.5" aria-label="Log out">
+              <LogOut className="w-4 h-4" />
+            </button>
+          </form>
         </div>
       </div>
     </div>
   )
 }
 
-export default function Header() {
+export default function Header({ email }: { email?: string | null }) {
   const pathname = usePathname()
   const info = titles[pathname] ?? { title: "Hub Ops", subtitle: "" }
   const [open, setOpen] = useState(false)
@@ -143,7 +126,7 @@ export default function Header() {
           <Menu className="w-5 h-5 text-foreground" />
         </SheetTrigger>
         <SheetContent side="left" className="w-64 p-0 bg-card border-border">
-          <MobileNav onClose={() => setOpen(false)} />
+          <MobileNav onClose={() => setOpen(false)} email={email} />
         </SheetContent>
       </Sheet>
 

@@ -4,6 +4,16 @@ import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { type BedListing } from "@/lib/inventory"
+import {
+  STAY_DURATIONS, MAX_STAY_MONTHS, checkoutForDuration, durationFitsUntil,
+  cancellationCutoffISO, CANCELLATION_REFUND_FRACTION,
+  SECOND_PAYMENT_DUE_DAYS, addDaysISO,
+  MAINTENANCE_FEE, PET_DEPOSIT_FEE, PET_MONTHLY_FEE, COUPLE_PREMIUM_MONTHLY,
+  EXPLORATORY_WEEK_RENT,
+  type StayDurationKey,
+} from "@/lib/stay"
+import { computeRentSchedule, ordinal } from "@/lib/rent-schedule"
+import { createClient as createSupabaseClient } from "@/lib/supabase/client"
 
 
 const AMBER = "#F9A91F"
@@ -15,7 +25,7 @@ All guests must provide valid government-issued photo ID at check-in. Only regis
 Standard check-in time is 1:00 PM and standard check-out time is 11:00 AM. Early check-in and late check-out are subject to availability and may incur additional charges. Extension of stay is subject to availability and prior approval. Notice period to vacate the property is 1 calendar month, served in writing.
 
 3. Payments & Security Deposit
-Full payment must be completed as per the agreed terms. The security deposit is held purely as security against potential damages and cannot be adjusted against or used to offset monthly rent under any circumstances. Security deposit will be refunded within 7 working days after completion of the notice period and check-out, subject to inspection. Deductions may be made for damages, missing items, or unpaid dues. To secure your spot the following must be cleared 24 hours before arrival: Security Deposit equivalent to 1 month's tariff + Maintenance fee (non-refundable one-time fee of ₹2,000). Billing is month-to-month. If you check in mid-month, your first payment covers the pro-rated days from your check-in date to the end of that month. From the following month, rent is billed on the 1st of each month.
+Full payment must be completed as per the agreed terms. The security deposit is held purely as security against potential damages and cannot be adjusted against or used to offset monthly rent under any circumstances. Security deposit will be refunded within 7 working days after completion of the notice period and check-out, subject to inspection. Deductions may be made for damages, missing items, or unpaid dues. To secure your spot the following must be cleared 24 hours before arrival: Security Deposit equivalent to 1 month's tariff + Maintenance fee (non-refundable one-time fee of ₹2,000). Billing is month-to-month. If you check in mid-month, your first payment covers the pro-rated days from your check-in date to the end of that month (a short pro-rated first month of 10 days or fewer is bundled with the next month's rent into the same payment link). Months paid by link before check-in are never auto-debited. Remaining full months are billed monthly in advance via a Razorpay auto-debit mandate — the debit is attempted from 2 days before the month begins, and rent is payable at the agreed tariff up to the 3rd of the month. If an auto-debit fails, you will be notified and given a payment link instead. From the 4th, a late payment fee of ₹500 per day of delay applies, accumulating daily up to the 10th of the month (₹3,500 in total). If rent remains unpaid on the 10th, you will be required to vacate the premises immediately, the security deposit stands forfeited, and all outstanding rent and late fees remain payable. If your stay ends mid-month, the final month is pro-rated to your check-out date and collected by payment link before that month begins — it is never auto-debited.
 
 4. Use of Premises
 Rooms and common areas must be used responsibly. Any damage to property, furniture, or fixtures will be chargeable. Rearranging furniture without permission is not allowed.
@@ -32,25 +42,28 @@ Visitors are allowed only during designated hours. Overnight visitors are permit
 8. Safety & Security
 Smoking and alcohol consumption are strictly prohibited on the premises. Illegal substances, narcotics, or any items prohibited under applicable law are strictly not permitted on the premises. Fire safety equipment must not be tampered with. Guests must follow all safety guidelines displayed on the premises.
 
-9. Prohibited Activities
+9. Room Inspections
+For the safety and health of all residents, management conducts random room inspections approximately once every two weeks. Residents consent to their room being accessed for these inspections; reasonable effort will be made to inform residents, but inspections may be unannounced. Rooms must be kept clean, hygienic, and free of prohibited items. Failing an inspection (for cleanliness, hygiene, safety, or rule violations) attracts a fine of ₹2,500 per occurrence. Three failed inspections will result in the resident being asked to leave the property, with no refund of rent or deposit beyond what is otherwise due.
+
+10. Prohibited Activities
 Illegal activities of any kind are strictly forbidden. Cooking inside rooms, tampering with utilities, or subletting is prohibited.
 
-10. Loss & Liability
+11. Loss & Liability
 Management is not responsible for loss or theft of personal belongings. Guests are advised to keep valuables secure at all times. Loss of room/property keys or access cards will attract a replacement charge of ₹3,000 per key, payable by the guest.
 
-11. Internet & Utilities
+12. Internet & Utilities
 Internet access is provided for personal use only. Excessive or illegal usage may result in restricted access. Utilities should be used responsibly.
 
-12. Rule Violations & Termination of Stay
+13. Rule Violations & Termination of Stay
 Violation of any rules may lead to penalties or immediate termination of stay. No refunds will be issued in case of eviction due to misconduct. Management's decision in such matters will be final.
 
-13. Pet Parents
-Pets are permitted only for guests registered as Pet Parents and approved by management. Pet Parents are fully responsible for their pet's behaviour, hygiene, vaccination, and any damage or disturbance caused. Pets must be vaccinated and, where applicable, spayed/neutered, with records available on request. Pets are not allowed in shared rooms without consent of co-occupants, nor in designated common/dining areas. Any damage, deep-cleaning, or pest treatment required due to a pet will be charged to the Pet Parent. Management reserves the right to withdraw pet permission if these rules are not followed.
+14. Pet Parents
+Pets are permitted only for guests registered as Pet Parents and approved by management. A one-time pet deposit of ₹25,000 and a recurring pet fee of ₹5,000 per month apply, billed alongside rent. Pet Parents are fully responsible for their pet's behaviour, hygiene, vaccination, and any damage or disturbance caused. Pets must be vaccinated and, where applicable, spayed/neutered, with records available on request. Any health concerns must be disclosed at onboarding, and pets should ideally be professionally trained. Pets are not allowed in shared rooms without consent of co-occupants, nor in designated common/dining areas. Any damage, deep-cleaning, or pest treatment required due to a pet will be charged to the Pet Parent. Management reserves the right to withdraw pet permission if these rules are not followed.
 
-14. Guests of Residents (Private Rooms Only)
+15. Guests of Residents (Private Rooms Only)
 An additional guest may stay with a resident only in a private room, and only once approved by management — approval is at management's sole discretion and may be withdrawn at any time. The primary tenant assumes full responsibility and liability for their guest's conduct, payments, and any damage or rule violation. The guest's stay remains subject to all house rules and to management's ongoing approval.
 
-15. Acceptance of Terms
+16. Acceptance of Terms
 By submitting this form, the guest confirms they have read, understood, and agreed to all the above rules and regulations.`
 
 type FormData = {
@@ -70,9 +83,12 @@ type FormData = {
   roomNumber: string
   monthlyRate: number
   checkIn: string
+  // Stay length is chosen as a fixed duration (max 4 months); the check-out
+  // date is derived from check-in + duration and locked.
+  duration: StayDurationKey | ""
   checkOut: string
   // Earliest/latest check-in allowed by the selected bed's availability window.
-  // Empty string means "no constraint" (bed is available now / open-ended).
+  // Empty string means "no constraint" (bed is available now).
   checkInMin: string
   checkInMax: string
   // Private rooms may host up to 2 guests under a single billing (deposit + rent
@@ -96,6 +112,8 @@ type FormData = {
   workAddress: string
   placeOfWork: string
   linkedin: string
+  // Reference contact at work (for verification)
+  workReference: string
   // Step 4
   idProofType: string
   idNumber: string
@@ -113,8 +131,11 @@ type FormData = {
   petGender: string
   petVaccinated: string
   petNeutered: string
+  petHealthConcerns: string
+  petTrained: boolean
   // Step 5
   rulesAccepted: boolean
+  inspectionConsent: boolean
   signature: File | null
 }
 
@@ -135,6 +156,7 @@ const INITIAL: FormData = {
   roomNumber: "",
   monthlyRate: 0,
   checkIn: "",
+  duration: "",
   checkOut: "",
   checkInMin: "",
   checkInMax: "",
@@ -156,6 +178,7 @@ const INITIAL: FormData = {
   workAddress: "",
   placeOfWork: "",
   linkedin: "",
+  workReference: "",
   idProofType: "",
   idNumber: "",
   idProof: null,
@@ -171,7 +194,10 @@ const INITIAL: FormData = {
   petGender: "",
   petVaccinated: "",
   petNeutered: "",
+  petHealthConcerns: "",
+  petTrained: false,
   rulesAccepted: false,
+  inspectionConsent: false,
   signature: null,
 }
 
@@ -387,9 +413,8 @@ function FileInput({
   )
 }
 
-const PROPERTY_MAP: Record<string, "safina-plaza" | "peepal-tree"> = {
+const PROPERTY_MAP: Record<string, "safina-plaza"> = {
   "The Hub Bengaluru – Safina Plaza": "safina-plaza",
-  "Peepal Tree @ The Hub": "peepal-tree",
 }
 
 function RoomSelector({
@@ -541,6 +566,9 @@ function validateStep(step: number, data: FormData): Errors {
     } else if (data.checkInMax && data.checkIn > data.checkInMax) {
       errors.checkIn = `This room is only available until ${new Date(data.checkInMax).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}. Pick an earlier check-in date.`
     }
+    if (!data.duration) {
+      errors.duration = "Select a stay duration"
+    }
   }
 
   if (step === 3) {
@@ -557,6 +585,8 @@ function validateStep(step: number, data: FormData): Errors {
     } else if (!/^https?:\/\/.+/.test(data.linkedin)) {
       errors.linkedin = "Enter a valid URL starting with http:// or https://"
     }
+    if (!data.workReference.trim())
+      errors.workReference = "A reference contact at work is required"
   }
 
   if (step === 4) {
@@ -574,8 +604,10 @@ function validateStep(step: number, data: FormData): Errors {
     }
     if (!data.emergencyRelation.trim())
       errors.emergencyRelation = "Relation is required"
-    if (!data.petParent) errors.petParent = "Please select an option"
-    if (data.petParent === "Yes") {
+    // Pets are only allowed in private rooms — the question isn't shown (and
+    // must not block) for sharing rooms.
+    if (data.roomType === "Private" && !data.petParent) errors.petParent = "Please select an option"
+    if (data.roomType === "Private" && data.petParent === "Yes") {
       if (!data.petType) errors.petType = "Please select your pet type"
       if (!data.petName.trim()) errors.petName = "Pet name is required"
       if (!data.petPhoto) errors.petPhoto = "A picture of your pet is required"
@@ -607,6 +639,8 @@ function validateStep(step: number, data: FormData): Errors {
   if (step === 5) {
     if (!data.rulesAccepted)
       errors.rulesAccepted = "You must accept the house rules to continue"
+    if (!data.inspectionConsent)
+      errors.inspectionConsent = "You must consent to room inspections to continue"
     if (!data.signature) errors.signature = "Signature upload is required"
   }
 
@@ -649,33 +683,62 @@ export default function BookPage() {
     proRatedDescription: string | null
     subscriptionStartDate: string | undefined
     monthlyRate: number
-    bedAssignmentDeferred?: boolean
+    depositExpiresAt?: number       // unix seconds — deposit link dies after this
+    depositWindowMinutes?: number
   } | null>(null)
   const [depositPaid, setDepositPaid] = useState(false)
   const [proRatedPaid, setProRatedPaid] = useState(false)
   const [checkingPayment, setCheckingPayment] = useState(false)
+  // Seconds left in the deposit-payment window; null = no active window.
+  // When it hits 0 without a paid deposit the booking is void (the link has
+  // expired server-side) and the guest must restart the whole process.
+  const [depositSecondsLeft, setDepositSecondsLeft] = useState<number | null>(null)
+  const [depositWindowExpired, setDepositWindowExpired] = useState(false)
+
+  useEffect(() => {
+    if (!paymentLinks?.depositExpiresAt || depositPaid) { setDepositSecondsLeft(null); return }
+    const tick = () => {
+      const left = Math.max(0, Math.floor(paymentLinks.depositExpiresAt! - Date.now() / 1000))
+      setDepositSecondsLeft(left)
+      if (left <= 0) {
+        setDepositWindowExpired(true)
+        setPaymentLinks(null)
+        try { localStorage.removeItem(`hub_payment_${paymentLinks.notionPageId}`) } catch { /* ignore */ }
+      }
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [paymentLinks, depositPaid])
 
   void submitting
   void submitError
 
-  // Auth gate — redirect to /auth if no session.
-  // Accepts both portal_profile (new booker) and portal_guest (existing resident).
+  // Auth gate — a REAL Supabase session is required (register/sign-in at
+  // /auth); a bare localStorage profile is only used to prefill, never to
+  // grant access. Covers both new bookers and existing residents (portal).
   useEffect(() => {
-    const stored = localStorage.getItem("portal_profile") ?? localStorage.getItem("portal_guest")
-    if (!stored) {
-      router.replace("/auth?next=/book")
-      return
-    }
-    try {
-      const profile = JSON.parse(stored) as { name: string; email: string; phone: string }
+    const supabase = createSupabaseClient()
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.replace("/auth?next=/book")
+        return
+      }
+      // Prefill: stored profile first, then the account's own metadata.
+      let profile: { name?: string; email?: string; phone?: string } = {}
+      try {
+        const stored = localStorage.getItem("portal_profile") ?? localStorage.getItem("portal_guest")
+        if (stored) profile = JSON.parse(stored)
+      } catch { /* ignore malformed */ }
+      const meta = (session.user.user_metadata ?? {}) as { name?: string; phone?: string }
       setData(prev => ({
         ...prev,
-        fullName: profile.name ?? prev.fullName,
-        email: profile.email ?? prev.email,
-        contactNumber: profile.phone ?? prev.contactNumber,
+        fullName: profile.name ?? meta.name ?? prev.fullName,
+        email: profile.email ?? session.user.email ?? prev.email,
+        contactNumber: profile.phone ?? meta.phone ?? prev.contactNumber,
       }))
-    } catch { /* ignore malformed */ }
-    setAuthChecked(true)
+      setAuthChecked(true)
+    })
   }, [router])
 
   useEffect(() => {
@@ -737,6 +800,11 @@ export default function BookPage() {
       const next = { ...prev, [key]: value }
       // Clear room selection when property or room type changes
       if (key === "property" || key === "roomType") next.roomNumber = ""
+      // The exploratory week is private-only — drop it when switching to sharing.
+      if (key === "roomType" && value !== "Private" && next.duration === "1w") {
+        next.duration = ""
+        next.checkOut = ""
+      }
       return next
     })
     setErrors((prev) => {
@@ -760,7 +828,7 @@ export default function BookPage() {
     setPaymentLoading(true)
     setPaymentError(null)
 
-    const propKey = data.property === "The Hub Bengaluru – Safina Plaza" ? "safina-plaza" : "peepal-tree"
+    const propKey = "safina-plaza"
 
     const fd = new FormData()
     fd.append("property", propKey)
@@ -775,7 +843,9 @@ export default function BookPage() {
     fd.append("roomType", data.roomType)
     fd.append("roomNumber", data.roomNumber)
     fd.append("checkIn", data.checkIn)
-    if (data.checkOut) fd.append("checkOut", data.checkOut)
+    const checkOut = checkoutForDuration(data.checkIn, data.duration)
+    if (checkOut) fd.append("checkOut", checkOut)
+    if (data.duration) fd.append("duration", data.duration)
     if (data.checkInMin) fd.append("checkInMin", data.checkInMin)
     if (data.checkInMax) fd.append("checkInMax", data.checkInMax)
     fd.append("orgName", data.orgName)
@@ -784,13 +854,18 @@ export default function BookPage() {
     fd.append("workAddress", data.workAddress)
     fd.append("placeOfWork", data.placeOfWork)
     fd.append("linkedin", data.linkedin)
+    fd.append("workReference", data.workReference)
     fd.append("idProofType", data.idProofType)
     fd.append("idNumber", data.idNumber)
     fd.append("emergencyName", data.emergencyName)
     fd.append("emergencyNumber", data.emergencyNumber)
     fd.append("emergencyRelation", data.emergencyRelation)
-    fd.append("petParent", data.petParent)
-    if (data.petParent === "Yes") {
+    fd.append("inspectionConsent", data.inspectionConsent ? "Yes" : "No")
+    // Pets are only allowed in private rooms — coerce a stale "Yes" (picked
+    // before the guest switched to a sharing room) to "No".
+    const effectivePetParent = data.roomType === "Private" ? data.petParent : "No"
+    fd.append("petParent", effectivePetParent)
+    if (effectivePetParent === "Yes") {
       fd.append("petType", data.petType)
       fd.append("petName", data.petName)
       fd.append("petAge", data.petAge)
@@ -798,6 +873,8 @@ export default function BookPage() {
       fd.append("petGender", data.petGender)
       fd.append("petVaccinated", data.petVaccinated)
       fd.append("petNeutered", data.petNeutered)
+      fd.append("petHealthConcerns", data.petHealthConcerns)
+      fd.append("petTrained", data.petTrained ? "Yes" : "No")
       if (data.petPhoto) fd.append("petPhoto", data.petPhoto)
     }
     if (data.roomType === "Private") fd.append("guestCount", data.guestCount)
@@ -885,6 +962,22 @@ export default function BookPage() {
       </div>
     )
   }
+
+  // Effective charges for the payment preview — MUST mirror the server's math
+  // in api/bookings/create-payment-links: the pet deposit joins Payment Link 1,
+  // and the pet/couple monthly fees ride on every rent charge (upfront link,
+  // subscription and final pro-rated month).
+  const hasPet = data.roomType === "Private" && data.petParent === "Yes" // pets: private rooms only
+  const petDeposit = hasPet ? PET_DEPOSIT_FEE : 0
+  const petMonthly = hasPet ? PET_MONTHLY_FEE : 0
+  const couplePremium = data.roomType === "Private" && data.guestCount === "2" ? COUPLE_PREMIUM_MONTHLY : 0
+  const effectiveMonthlyRate = data.monthlyRate + petMonthly + couplePremium
+  // 1 Week Exploratory Stay (private only): flat rent, NO security deposit;
+  // the maintenance fee (and pet deposit) still land on Payment Link 1.
+  const isExploratory = data.duration === "1w"
+  const depositLinkAmount = (isExploratory ? 0 : data.monthlyRate) + MAINTENANCE_FEE + petDeposit
+  const upfrontRentAmount = (checkOutISO: string | null) =>
+    isExploratory ? EXPLORATORY_WEEK_RENT : computeRentSchedule(data.checkIn, checkOutISO, effectiveMonthlyRate).upfrontAmount
 
   return (
     <div className="min-h-screen bg-white">
@@ -1093,7 +1186,6 @@ export default function BookPage() {
                 <ButtonGroup
                   options={[
                     "The Hub Bengaluru – Safina Plaza",
-                    "Peepal Tree @ The Hub",
                   ]}
                   value={data.property}
                   onChange={(v) => set("property", v)}
@@ -1122,14 +1214,18 @@ export default function BookPage() {
                   value={data.roomNumber}
                   onChange={(v) => {
                     set("roomNumber", v)
-                    // Clear bed-locked check-out when selection changes
-                    if (!bedAvailableUntil) set("checkOut", "")
+                    // Re-pick the stay length whenever the bed changes.
+                    set("duration", "")
+                    set("checkOut", "")
                   }}
                   onRateChange={(rate) => set("monthlyRate", rate)}
                   onAvailableUntilChange={(until) => {
                     setBedAvailableUntil(until)
-                    if (until) set("checkOut", until)
-                    else set("checkOut", "")
+                    // Drop the chosen duration if the new bed can't honour it.
+                    if (until && data.duration && !durationFitsUntil(data.checkIn, data.duration, until)) {
+                      set("duration", "")
+                      set("checkOut", "")
+                    }
                   }}
                   onWindowChange={(from, until) => {
                     // Clamp the check-in date to the bed's real availability window.
@@ -1148,10 +1244,16 @@ export default function BookPage() {
                 <TextInput
                   type="date"
                   value={data.checkIn}
-                  onChange={(v) => set("checkIn", v)}
+                  onChange={(v) => {
+                    set("checkIn", v)
+                    set("checkOut", checkoutForDuration(v, data.duration))
+                  }}
                   error={errors.checkIn}
                   min={data.checkInMin || todayStr()}
-                  max={data.checkInMax || undefined}
+                  // Never hand the browser an impossible range (max < min) — it
+                  // rejects every date. Drop the max instead; server-side
+                  // validation still enforces the real window.
+                  max={data.checkInMax && data.checkInMax >= (data.checkInMin || todayStr()) ? data.checkInMax : undefined}
                 />
                 {data.checkInMin && (
                   <p className="mt-1 text-xs text-amber-600">
@@ -1162,20 +1264,60 @@ export default function BookPage() {
               </div>
 
               <div>
-                <Label>
-                  Check-out date{bedAvailableUntil ? "" : " (leave blank for open-ended)"}
-                </Label>
-                <TextInput
-                  type="date"
-                  value={data.checkOut}
-                  onChange={(v) => { if (!bedAvailableUntil) set("checkOut", v) }}
-                  error={errors.checkOut}
-                />
+                <Label required>Stay duration</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {STAY_DURATIONS
+                    // The 1 Week Exploratory Stay is offered for private rooms only.
+                    .filter((d) => d.key !== "1w" || data.roomType === "Private")
+                    .map((d) => {
+                    const limit = bedAvailableUntil || data.checkInMax || null
+                    const fits = !data.checkIn || durationFitsUntil(data.checkIn, d.key, limit)
+                    const selected = data.duration === d.key
+                    return (
+                      <button
+                        key={d.key}
+                        type="button"
+                        disabled={!data.checkIn || !fits}
+                        onClick={() => {
+                          set("duration", d.key)
+                          set("checkOut", checkoutForDuration(data.checkIn, d.key))
+                        }}
+                        className={`h-10 rounded-xl border text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                          selected
+                            ? "border-transparent text-black"
+                            : "border-gray-200 text-gray-600 hover:border-gray-300 cursor-pointer"
+                        }`}
+                        style={selected ? { backgroundColor: AMBER } : undefined}
+                      >
+                        {d.key === "1w" ? "1 week" : d.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {errors.duration && <p className="mt-1 text-xs text-red-500">{errors.duration}</p>}
+                {data.roomType === "Private" && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    1 week = <span className="font-medium">Exploratory Stay</span>: flat ₹{EXPLORATORY_WEEK_RENT.toLocaleString("en-IN")} incl. GST for the week, no security deposit (₹{MAINTENANCE_FEE.toLocaleString("en-IN")} maintenance fee applies).
+                  </p>
+                )}
+                {!data.checkIn ? (
+                  <p className="mt-1 text-xs text-gray-400">Pick a check-in date first.</p>
+                ) : data.duration ? (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Checks out{" "}
+                    <span className="font-medium text-gray-700">
+                      {new Date(checkoutForDuration(data.checkIn, data.duration) + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                    </span>
+                    . Stays are capped at {MAX_STAY_MONTHS} months — re-apply to extend.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-gray-400">Maximum stay is {MAX_STAY_MONTHS} months.</p>
+                )}
                 {bedAvailableUntil && (
                   <p className="mt-1 text-xs text-amber-600">
                     * This room is only available until{" "}
-                    {new Date(bedAvailableUntil).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}.
-                    Check-out date is locked accordingly.
+                    {new Date(bedAvailableUntil).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                    {" "}— longer durations are disabled.
                   </p>
                 )}
               </div>
@@ -1279,6 +1421,19 @@ export default function BookPage() {
                   error={errors.linkedin}
                 />
               </div>
+
+              <div>
+                <Label required>Reference contact at work</Label>
+                <TextInput
+                  value={data.workReference}
+                  onChange={(v) => set("workReference", v)}
+                  placeholder="Name & phone of a colleague / manager we can verify with"
+                  error={errors.workReference}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Someone at your workplace we can reach out to for verification.
+                </p>
+              </div>
             </div>
           )}
 
@@ -1375,19 +1530,28 @@ export default function BookPage() {
                 </div>
               </div>
 
-              <div>
-                <Label required>Are you a pet parent?</Label>
-                <ButtonGroup
-                  options={["Yes", "No"]}
-                  value={data.petParent}
-                  onChange={(v) => set("petParent", v)}
-                  error={errors.petParent}
-                />
-              </div>
+              {data.roomType === "Private" ? (
+                <div>
+                  <Label required>Are you a pet parent?</Label>
+                  <ButtonGroup
+                    options={["Yes", "No"]}
+                    value={data.petParent}
+                    onChange={(v) => set("petParent", v)}
+                    error={errors.petParent}
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  🐾 Pets are only allowed in private rooms — sharing rooms cannot host pets.
+                </p>
+              )}
 
-              {data.petParent === "Yes" && (
+              {data.roomType === "Private" && data.petParent === "Yes" && (
                 <div className="space-y-4 rounded-lg border border-amber-200 bg-amber-50/40 p-4">
                   <p className="text-sm font-medium text-gray-700">Tell us about your pet 🐾</p>
+                  <p className="text-xs text-amber-800">
+                    Pet fee: a one-time ₹{PET_DEPOSIT_FEE.toLocaleString("en-IN")} pet deposit (added to Payment Link 1) plus ₹{PET_MONTHLY_FEE.toLocaleString("en-IN")}/month billed with your rent.
+                  </p>
 
                   <div>
                     <Label required>What pet do you have?</Label>
@@ -1468,6 +1632,42 @@ export default function BookPage() {
                       onChange={(v) => set("petNeutered", v)}
                       error={errors.petNeutered}
                     />
+                  </div>
+
+                  <div>
+                    <Label>Any health concerns with your pet?</Label>
+                    <TextareaInput
+                      value={data.petHealthConcerns}
+                      onChange={(v) => set("petHealthConcerns", v)}
+                      placeholder="Allergies, medication, special needs, etc. Leave blank if none."
+                      error={errors.petHealthConcerns}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={data.petTrained}
+                        onChange={(e) => set("petTrained", e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 shrink-0"
+                        style={{ accentColor: AMBER }}
+                      />
+                      <span className="text-sm text-gray-700">
+                        My pet is professionally trained
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="rounded-lg border border-amber-300 bg-amber-100/60 p-3">
+                    <p className="text-sm font-medium text-gray-800">Pet fee</p>
+                    <p className="mt-1 text-xs text-gray-600">
+                      Bringing a pet involves a{" "}
+                      <span className="font-semibold text-gray-800">₹25,000 one-time deposit</span>{" "}
+                      plus a{" "}
+                      <span className="font-semibold text-gray-800">₹5,000/month recurring fee</span>,
+                      billed alongside your rent.
+                    </p>
                   </div>
                 </div>
               )}
@@ -1584,6 +1784,25 @@ export default function BookPage() {
               </div>
 
               <div>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={data.inspectionConsent}
+                    onChange={(e) => set("inspectionConsent", e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 shrink-0"
+                    style={{ accentColor: AMBER }}
+                  />
+                  <span className="text-sm text-gray-700">
+                    I consent to my room being accessed randomly every two weeks for safety and health inspection
+                    <span className="ml-1 font-semibold" style={{ color: AMBER }}>
+                      *
+                    </span>
+                  </span>
+                </label>
+                <FieldError msg={errors.inspectionConsent} />
+              </div>
+
+              <div>
                 <Label required>
                   Upload your signature (photo/scan of handwritten signature)
                 </Label>
@@ -1598,7 +1817,32 @@ export default function BookPage() {
           )}
 
           {/* Step 6: Payment */}
-          {step === 6 && (
+          {step === 6 && depositWindowExpired && !paymentLinks && (
+            <div className="space-y-5 text-center py-10">
+              <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mx-auto">
+                <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-2xl text-black mb-1" style={{ fontFamily: "Calistoga, serif" }}>
+                  Your booking expired
+                </h2>
+                <p className="text-sm text-gray-500 max-w-sm mx-auto">
+                  The deposit wasn&apos;t paid within the 25-minute window, so this booking was released and the room is open to others again. Please start over to book.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-6 py-3 rounded-xl text-sm font-semibold text-black cursor-pointer transition-opacity hover:opacity-90"
+                style={{ backgroundColor: AMBER }}
+              >
+                Start over
+              </button>
+            </div>
+          )}
+          {step === 6 && !(depositWindowExpired && !paymentLinks) && (
             <div className="space-y-6">
               {!paymentLinks ? (
                 <>
@@ -1617,6 +1861,8 @@ export default function BookPage() {
                     <div className="flex justify-between"><span className="text-gray-500">Room</span><span className="font-medium">{data.roomNumber}</span></div>
                     <div className="flex justify-between"><span className="text-gray-500">Room type</span><span className="font-medium">{data.roomType}</span></div>
                     <div className="flex justify-between"><span className="text-gray-500">Check-in</span><span className="font-medium">{data.checkIn ? new Date(data.checkIn + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—"}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">Stay</span><span className="font-medium">{STAY_DURATIONS.find(s => s.key === data.duration)?.label ?? "—"}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-500">Check-out</span><span className="font-medium">{(() => { const co = checkoutForDuration(data.checkIn, data.duration); return co ? new Date(co + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—" })()}</span></div>
                   </div>
 
                   {/* Payment breakdown */}
@@ -1627,53 +1873,141 @@ export default function BookPage() {
                     </div>
 
                     <div className="space-y-2 text-gray-600">
-                      <div className="flex justify-between">
-                        <span>Security deposit (refundable)</span>
-                        <span>₹{data.monthlyRate.toLocaleString("en-IN")}</span>
-                      </div>
+                      {isExploratory ? (
+                        <div className="flex justify-between">
+                          <span>Security deposit</span>
+                          <span className="font-medium text-emerald-700">None — exploratory stay</span>
+                        </div>
+                      ) : (
+                        <div className="flex justify-between">
+                          <span>Security deposit (refundable)</span>
+                          <span>₹{data.monthlyRate.toLocaleString("en-IN")}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between">
                         <span>Onboarding & maintenance fee</span>
-                        <span>₹2,000</span>
+                        <span>₹{MAINTENANCE_FEE.toLocaleString("en-IN")}</span>
                       </div>
+                      {petDeposit > 0 && (
+                        <div className="flex justify-between">
+                          <span>Pet deposit (one-time)</span>
+                          <span>₹{petDeposit.toLocaleString("en-IN")}</span>
+                        </div>
+                      )}
                       <div className="border-t pt-2 flex justify-between font-semibold text-gray-900">
                         <span>Payment Link 1 — due now</span>
-                        <span>₹{(data.monthlyRate + 2000).toLocaleString("en-IN")}</span>
+                        <span>₹{depositLinkAmount.toLocaleString("en-IN")}</span>
                       </div>
                     </div>
 
                     {data.checkIn && (() => {
-                      const d = new Date(data.checkIn + "T00:00:00")
-                      const day = d.getDate()
-                      if (day === 1) return null
-                      const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
-                      const daysRemaining = daysInMonth - day + 1
-                      const proRated = Math.round((data.monthlyRate / daysInMonth) * daysRemaining)
-                      const monthName = d.toLocaleString("en-IN", { month: "long" })
+                      const checkOut = data.checkOut || checkoutForDuration(data.checkIn, data.duration)
+                      const schedule = isExploratory ? null : computeRentSchedule(data.checkIn, checkOut || null, effectiveMonthlyRate)
+                      const dueByISO = addDaysISO(todayStr(), SECOND_PAYMENT_DUE_DAYS)
+                      const dueBy = new Date(dueByISO + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+                      const fmtDay = (iso: string) => parseInt(iso.slice(8, 10), 10)
                       return (
                         <div className="border-t pt-3 space-y-2 text-gray-600">
-                          <div className="flex justify-between">
-                            <span>Pro-rated {monthName} rent ({day}th–{daysInMonth}th, {daysRemaining} days)</span>
-                            <span>₹{proRated.toLocaleString("en-IN")}</span>
-                          </div>
+                          {isExploratory ? (
+                            <div className="flex justify-between">
+                              <span>1 Week Exploratory Stay — flat rate (incl. GST)</span>
+                              <span>₹{EXPLORATORY_WEEK_RENT.toLocaleString("en-IN")}</span>
+                            </div>
+                          ) : (
+                            schedule!.upfront.map((m, i) => (
+                              <div key={i} className="flex justify-between">
+                                <span>
+                                  {m.full
+                                    ? `${m.monthLabel} rent (full month)`
+                                    : `Pro-rated ${m.monthLabel} rent (${ordinal(fmtDay(m.fromISO))}–${ordinal(fmtDay(m.toISO))}, ${m.days} days)`}
+                                  {i === 1 ? " — short first month bundled" : ""}
+                                </span>
+                                <span>₹{m.amount.toLocaleString("en-IN")}</span>
+                              </div>
+                            ))
+                          )}
+                          {!isExploratory && (petMonthly > 0 || couplePremium > 0) && (
+                            <p className="text-xs text-gray-400">
+                              Rent charged at ₹{effectiveMonthlyRate.toLocaleString("en-IN")}/mo — ₹{data.monthlyRate.toLocaleString("en-IN")} room rent
+                              {petMonthly > 0 ? ` + ₹${petMonthly.toLocaleString("en-IN")}/mo pet fee` : ""}
+                              {couplePremium > 0 ? ` + ₹${couplePremium.toLocaleString("en-IN")}/mo couple premium` : ""}.
+                            </p>
+                          )}
                           <div className="flex justify-between font-semibold text-gray-900">
-                            <span>Payment Link 2 — due before check-in</span>
-                            <span>₹{proRated.toLocaleString("en-IN")}</span>
+                            <span>Payment Link 2 — due by {dueBy}</span>
+                            <span>₹{(isExploratory ? EXPLORATORY_WEEK_RENT : schedule!.upfrontAmount).toLocaleString("en-IN")}</span>
                           </div>
+                          <p className="text-xs text-gray-400">
+                            Pay within {SECOND_PAYMENT_DUE_DAYS} days of the deposit to secure &amp; block your room.
+                          </p>
                         </div>
                       )
                     })()}
                   </div>
 
-                  {/* Subscription note */}
-                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-                    <span className="font-semibold">Monthly subscription:</span> ₹{data.monthlyRate.toLocaleString("en-IN")}/mo (Incl. GST) starts from{" "}
-                    {data.checkIn && (() => {
-                      const d = new Date(data.checkIn + "T00:00:00")
-                      const start = new Date(d.getFullYear(), d.getMonth() + 1, 1)
-                      return start.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
-                    })()}.
-                    {" "}You&apos;ll receive a Razorpay mandate link to authorise recurring payments.
-                  </div>
+                  {/* Cancellation policy — computed for this booking */}
+                  {data.checkIn && (() => {
+                    const d = new Date(data.checkIn + "T00:00:00")
+                    const checkOut = data.checkOut || checkoutForDuration(data.checkIn, data.duration)
+                    const totalPayable = depositLinkAmount + upfrontRentAmount(checkOut || null)
+                    const refund = Math.round(totalPayable * CANCELLATION_REFUND_FRACTION)
+                    const cutoff = new Date(cancellationCutoffISO(data.checkIn) + "T00:00:00")
+                    const cutoffLabel = cutoff.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+                    const checkInLabel = d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+                    return (
+                      <div className="rounded-xl border border-gray-200 p-5 space-y-2 text-sm">
+                        <h3 className="font-semibold text-gray-800">Cancellation policy</h3>
+                        <div className="flex justify-between text-gray-600">
+                          <span>On or before <span className="font-medium text-gray-800">{cutoffLabel}</span> (31+ days before check-in)</span>
+                          <span className="font-medium text-emerald-700">{Math.round(CANCELLATION_REFUND_FRACTION * 100)}% refund · ₹{refund.toLocaleString("en-IN")}</span>
+                        </div>
+                        <div className="flex justify-between text-gray-600">
+                          <span>{cutoffLabel} – {checkInLabel} (within 31 days)</span>
+                          <span className="font-medium text-red-600">No refund</span>
+                        </div>
+                        <p className="text-xs text-gray-400">
+                          Refund is 50% of the total payable (₹{totalPayable.toLocaleString("en-IN")}). Cancellation isn&apos;t possible within 31 days of check-in.
+                        </p>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Subscription note — mirrors the server's rent schedule */}
+                  {data.checkIn && (() => {
+                    const checkOut = data.checkOut || checkoutForDuration(data.checkIn, data.duration)
+                    if (isExploratory) {
+                      return (
+                        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+                          <span className="font-semibold">No subscription, no deposit:</span> your exploratory week is fully covered by the flat ₹{EXPLORATORY_WEEK_RENT.toLocaleString("en-IN")} payment above — no auto-debit will be set up and there is no security deposit to refund.
+                        </div>
+                      )
+                    }
+                    const schedule = computeRentSchedule(data.checkIn, checkOut || null, effectiveMonthlyRate)
+                    const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+                    return (
+                      <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+                        {schedule.subscription ? (
+                          <>
+                            <span className="font-semibold">Monthly subscription:</span> ₹{effectiveMonthlyRate.toLocaleString("en-IN")}/mo (Incl. GST{petMonthly > 0 ? `, incl. ₹${petMonthly.toLocaleString("en-IN")}/mo pet fee` : ""}) starts from {fmt(schedule.subscription.startISO)}
+                            {schedule.subscription.cycles != null && (
+                              <> and auto-debits {schedule.subscription.cycles} month{schedule.subscription.cycles > 1 ? "s" : ""}, ending with your stay</>
+                            )}.
+                            {" "}You&apos;ll receive a Razorpay mandate link to authorise recurring payments.
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-semibold">No subscription needed:</span> your stay is covered by the payments above
+                            {schedule.finalMonth ? " plus a final pro-rated payment link" : ""} — no auto-debit will be set up.
+                          </>
+                        )}
+                        {schedule.subscription && schedule.finalMonth && (
+                          <>
+                            {" "}Your final month ({fmt(schedule.finalMonth.fromISO)} – {fmt(schedule.finalMonth.toISO)}, {schedule.finalMonth.days} days) is pro-rated at ₹{schedule.finalMonth.amount.toLocaleString("en-IN")} and collected by payment link — it is never auto-debited.
+                          </>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   {paymentError && <p className="text-sm text-red-500">{paymentError}</p>}
 
@@ -1708,6 +2042,20 @@ export default function BookPage() {
                     </p>
                   </div>
 
+                  {/* Deposit-window countdown: the deposit link expires after
+                      25 minutes, voiding the booking — pay before it hits 0. */}
+                  {!depositPaid && depositSecondsLeft !== null && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex items-center justify-between gap-3">
+                      <span>
+                        Pay the deposit within{" "}
+                        <span className="font-bold tabular-nums">
+                          {Math.floor(depositSecondsLeft / 60)}:{String(depositSecondsLeft % 60).padStart(2, "0")}
+                        </span>{" "}
+                        minutes — after that this booking expires and you&apos;ll have to start over.
+                      </span>
+                    </div>
+                  )}
+
                   {/* Welcome note — shown only once ALL due payments are confirmed. */}
                   {depositPaid && (!paymentLinks.proRatedLinkId || proRatedPaid) && (
                     <div className="rounded-xl border border-green-200 bg-green-50 p-5 space-y-4">
@@ -1739,8 +2087,13 @@ export default function BookPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Payment 1 — Due now</p>
-                        <p className="font-semibold text-gray-900 mt-0.5">Security deposit + maintenance fee</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Deposit: ₹{(paymentLinks.depositAmount - 2000).toLocaleString("en-IN")} · Maintenance: ₹2,000</p>
+                        <p className="font-semibold text-gray-900 mt-0.5">
+                          {isExploratory ? "Maintenance fee" : "Security deposit + maintenance fee"}{petDeposit > 0 ? " + pet deposit" : ""}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {isExploratory ? "No security deposit (exploratory stay)" : `Deposit: ₹${(paymentLinks.depositAmount - MAINTENANCE_FEE - petDeposit).toLocaleString("en-IN")}`} · Maintenance: ₹{MAINTENANCE_FEE.toLocaleString("en-IN")}
+                          {petDeposit > 0 ? ` · Pet deposit: ₹${petDeposit.toLocaleString("en-IN")}` : ""}
+                        </p>
                       </div>
                       <span className="text-lg font-bold text-gray-900 whitespace-nowrap">₹{paymentLinks.depositAmount.toLocaleString("en-IN")}</span>
                     </div>

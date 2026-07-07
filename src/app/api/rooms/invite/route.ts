@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { checkInGuest, BedOccupiedError } from "@/lib/notion"
 import { sendEmail } from "@/lib/email"
+import { requireAdminApi, authErrorResponse } from "@/lib/auth/api-guards"
 import type { Property } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -10,6 +11,8 @@ export const dynamic = "force-dynamic"
 // The guest-completed form is the source of truth for their full details.
 export async function POST(req: Request) {
   try {
+    await requireAdminApi()
+
     const { notionPageId, property, guestName, phone, email, monthlyRate, gender } = await req.json() as {
       notionPageId: string
       property: Property
@@ -60,6 +63,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, formUrl, emailSent })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[api/rooms/invite]", err)
     if (err instanceof BedOccupiedError) {
       return NextResponse.json({ error: err.message }, { status: 409 })

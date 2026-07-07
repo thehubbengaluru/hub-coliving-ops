@@ -9,6 +9,7 @@ import {
   Menu, Camera,
 } from "lucide-react"
 import { formatAvailableFrom, getRoomLabel, type BedListing } from "@/lib/inventory"
+import { createClient as createSupabaseClient } from "@/lib/supabase/client"
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const AMBER      = "#F9A91F"
@@ -36,40 +37,19 @@ const properties = [
     pricing: [
       { label: "1-week short stay",        type: "Any",     monthly: "₹25,000", flat: true,  popular: false, best: false },
       { label: "Standard sharing",          type: "Sharing", monthly: "₹21,500", flat: false, popular: false, best: false },
-      { label: "Deluxe sharing",            type: "Sharing", monthly: "₹30,000", flat: false, popular: true,  best: false },
+      { label: "Deluxe sharing",            type: "Sharing", monthly: "₹25,000", flat: false, popular: true,  best: false },
       { label: "Private room",              type: "Private", monthly: "₹43,500", flat: false, popular: false, best: false },
-      { label: "Deluxe private",            type: "Private", monthly: "₹60,000", flat: false, popular: false, best: false },
-    ],
-  },
-  {
-    id: "peepal-tree" as const,
-    name: "Peepal Tree @ The Hub",
-    shortName: "Peepal Tree",
-    tagline: "Intimate co-living. St Johns Road.",
-    area: "St Johns Road",
-    address: "35/1, St Johns Rd, Sivanchetti Gardens, Bengaluru 560042",
-    beds: 19,
-    privateRooms: 4,
-    sharedBeds: 15,
-    reception: "8 am – 8 pm",
-    security: "CCTV + guard 8 am – 8 pm",
-    whatsapp: "919113992047",
-    fromPrice: "₹18,550",
-    gradient: "linear-gradient(135deg, #2d1b00 0%, #4a2c00 40%, #6b3f00 100%)",
-    pricing: [
-      { label: "1-week short stay",  type: "Any",     monthly: "₹25,000", flat: true,  popular: false, best: false },
-      { label: "Shared room",        type: "Sharing", monthly: "₹18,550", flat: false, popular: false, best: true  },
-      { label: "Private room",       type: "Private", monthly: "₹39,100", flat: false, popular: false, best: false },
+      { label: "Deluxe private",            type: "Private", monthly: "₹50,000", flat: false, popular: false, best: false },
     ],
   },
 ]
 
 const benefits = [
   { title: "All-Inclusive Rent",    desc: "Wi-Fi, housekeeping, power backup, hot water — all in one price." },
-  { title: "Prime Locations",       desc: "Shivaji Nagar & St Johns Road, two of Bengaluru's best-connected neighbourhoods." },
+  { title: "Prime Location",        desc: "Shivaji Nagar, one of Bengaluru's best-connected neighbourhoods." },
   { title: "Verified Community",    desc: "Professionals, students, and creatives who value good living." },
   { title: "Zero Maintenance",      desc: "We handle it. You just live. No landlord calls, no repair stress." },
-  { title: "Flexible Stays",        desc: "From 1 week to open-ended. Your timeline, your call." },
+  { title: "Flexible Stays",        desc: "From 1 week to 4 months, on a monthly cycle. Renew anytime." },
   { title: "24/7 Support",          desc: "Always someone to call. Your property manager is a WhatsApp away." },
 ]
 
@@ -100,11 +80,7 @@ const faqs = [
   },
   {
     q: "Are meals included?",
-    a: "No, meals are not included. Both properties have a shared kitchen you can use.",
-  },
-  {
-    q: "What's the difference between the two properties?",
-    a: "Safina Plaza is in the heart of Shivaji Nagar with 24-hour reception and security — great if you want city-centre access and a larger community. Peepal Tree on St Johns Road is more intimate with 19 rooms in a quieter neighbourhood. Both give you access to Hub community events.",
+    a: "No, meals are not included. The property has a shared kitchen you can use.",
   },
 ]
 
@@ -112,7 +88,7 @@ const faqs = [
 
 interface EnquiryTarget {
   bed: BedListing | null
-  property: "safina-plaza" | "peepal-tree"
+  property: "safina-plaza"
 }
 
 function EnquiryModal({ target, onClose }: { target: EnquiryTarget | null; onClose: () => void }) {
@@ -168,7 +144,7 @@ function EnquiryModal({ target, onClose }: { target: EnquiryTarget | null; onClo
   }, [name, phone, email, roomType, notes, target])
 
   if (!target) return null
-  const propertyName = target.property === "peepal-tree" ? "Peepal Tree @ The Hub" : "The Hub Bengaluru"
+  const propertyName = "The Hub Bengaluru"
 
   return (
     <div
@@ -344,17 +320,25 @@ export default function LandingPage() {
   const [profileName, setProfileName] = useState<string | null>(null)
 
   useEffect(() => {
-    const stored = localStorage.getItem("portal_profile")
-    if (stored) {
-      try { setProfileName(JSON.parse(stored).name ?? null) } catch { /* ignore */ }
-    }
+    // Show as signed-in only with a real Supabase session — a stale
+    // localStorage profile alone must not skip the /auth register step.
+    createSupabaseClient().auth.getSession().then(({ data: { session } }) => {
+      if (!session) return
+      const meta = (session.user.user_metadata ?? {}) as { name?: string }
+      let storedName: string | null = null
+      try {
+        const stored = localStorage.getItem("portal_profile")
+        if (stored) storedName = (JSON.parse(stored).name as string | undefined) ?? null
+      } catch { /* ignore */ }
+      setProfileName(storedName ?? meta.name ?? session.user.email ?? null)
+    })
   }, [])
 
   // Property switcher (availability)
-  const [activeProperty, setActiveProperty] = useState<"safina-plaza" | "peepal-tree">("safina-plaza")
+  const activeProperty = "safina-plaza" as const
 
   // Pricing tab
-  const [pricingProperty, setPricingProperty] = useState<"safina-plaza" | "peepal-tree">("safina-plaza")
+  const pricingProperty = "safina-plaza" as const
 
   // FAQ
   const [openFaq, setOpenFaq] = useState<number | null>(null)
@@ -406,7 +390,7 @@ export default function LandingPage() {
   const displayedBeds = showAll ? sortedBeds : sortedBeds.slice(0, 9)
   const vacantNow = propertyBeds.filter(b => b.status === "Vacant").length
 
-  const openEnquiry = useCallback((bed: BedListing | null, property: "safina-plaza" | "peepal-tree") => {
+  const openEnquiry = useCallback((bed: BedListing | null, property: "safina-plaza") => {
     setEnquiryTarget({ bed, property })
     setEnquiryModal(true)
   }, [])
@@ -681,9 +665,9 @@ export default function LandingPage() {
       <section className="bg-white border-y border-gray-100 py-12 px-4 sm:px-6">
         <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
           {[
-            { value: "55+",     label: "Beds across both properties" },
-            { value: "2",       label: "Properties in Bengaluru" },
-            { value: "₹18,550", label: "Starting monthly rate" },
+            { value: "33",      label: "Beds at Safina Plaza" },
+            { value: "8",       label: "Private rooms" },
+            { value: "₹21,500", label: "Starting monthly rate" },
             { value: "24/7",    label: "Support & security" },
           ].map(({ value, label }) => (
             <div key={value} className="text-center">
@@ -707,9 +691,9 @@ export default function LandingPage() {
               className="text-[38px] sm:text-[48px] font-normal text-black mb-3"
               style={{ fontFamily: "Cinzel, serif" }}
             >
-              Our Properties
+              Our Property
             </h2>
-            <p className="text-[16px] text-gray-500">Choose your neighbourhood</p>
+            <p className="text-[16px] text-gray-500">In the heart of Shivaji Nagar</p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-8">
@@ -810,7 +794,7 @@ export default function LandingPage() {
                   {vacantNow > 0 ? (
                     <>
                       <span className="font-semibold text-green-700">{vacantNow} beds available right now</span>
-                      {" "}at {activeProperty === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"}.
+                      {" "}at Safina Plaza.
                     </>
                   ) : (
                     "No beds available right now — check back soon or WhatsApp us."
@@ -827,25 +811,6 @@ export default function LandingPage() {
               >
                 General enquiry
               </button>
-              <div
-                className="inline-flex rounded-full p-1"
-                style={{ backgroundColor: "#f3f4f6" }}
-              >
-                {(["safina-plaza", "peepal-tree"] as const).map(p => (
-                  <button
-                    key={p}
-                    onClick={() => { setActiveProperty(p); setShowAll(false) }}
-                    className="px-4 py-1.5 rounded-full text-[12px] font-medium transition-all"
-                    style={
-                      activeProperty === p
-                        ? { backgroundColor: AMBER, color: "#000" }
-                        : { color: "#6b7280" }
-                    }
-                  >
-                    {p === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
 
@@ -965,29 +930,6 @@ export default function LandingPage() {
               Transparent Pricing
             </h2>
             <p className="text-[16px] text-gray-500">No hidden charges. Everything included.</p>
-          </div>
-
-          {/* Property switcher */}
-          <div className="flex justify-center mb-8">
-            <div
-              className="inline-flex rounded-full p-1"
-              style={{ backgroundColor: "#e9e9e9" }}
-            >
-              {(["safina-plaza", "peepal-tree"] as const).map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPricingProperty(p)}
-                  className="px-6 py-2.5 rounded-full text-[13px] font-medium transition-all"
-                  style={
-                    pricingProperty === p
-                      ? { backgroundColor: "#fff", color: "#111", boxShadow: "0 1px 4px rgba(0,0,0,0.10)" }
-                      : { color: "#6b7280" }
-                  }
-                >
-                  {p === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Pricing table */}

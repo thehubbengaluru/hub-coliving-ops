@@ -1,23 +1,88 @@
 import { NextResponse } from "next/server"
-import { Client } from "@notionhq/client"
+import { Client, isFullPage } from "@notionhq/client"
+import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
 import {
   createDepositLink,
   createProRatedLink,
   createRentSubscription,
-  calcProRatedRent,
 } from "@/lib/razorpay"
-import { checkInGuest, findBedPageId, BedOccupiedError } from "@/lib/notion"
+import { computeRentSchedule, describeRentMonths } from "@/lib/rent-schedule"
+import { archiveGuestDocuments } from "@/lib/supabase/storage"
+import { normalizeRoomTier, rateForTier, tierFromRate, TIER_RATES } from "@/lib/pricing"
+import {
+  exceedsMaxStay, maxStayCheckoutISO, MAX_STAY_MONTHS, istTodayISO,
+  MAINTENANCE_FEE, PET_DEPOSIT_FEE, PET_MONTHLY_FEE, COUPLE_PREMIUM_MONTHLY,
+  EXPLORATORY_WEEK_RENT, isExploratoryStay, DEPOSIT_PAYMENT_WINDOW_MINUTES,
+} from "@/lib/stay"
+import { rateLimit, clientKey } from "@/lib/rate-limit"
 
 export const dynamic = "force-dynamic"
 
 const DB_ID = "2d969190-ee9b-8025-a11b-dc5da277447f"
-const MAINTENANCE_FEE = 2000
 
-// Local YYYY-MM-DD for "today" (server-side past-date guard).
-function todayStr(): string {
-  const d = new Date()
-  const tz = d.getTimezoneOffset() * 60000
-  return new Date(d.getTime() - tz).toISOString().slice(0, 10)
+// Resolve the canonical per-bed monthly rate for a booking, so we never trust
+// the rate the client posts. The wizard sends a COARSE room type ("Private" /
+// "Double sharing") that spans both Standard and Deluxe tiers — for those,
+// accept any canonical tariff of the matching room size (the exact rate then
+// identifies the tier). An exact tier label ("Deluxe Private") validates
+// strictly. Returns null when the posted rate is not a valid tariff.
+function canonicalRate(property: "safina-plaza", roomType: string, posted: number): number | null {
+  const raw = roomType.trim().toLowerCase()
+  if (/standard|deluxe/.test(raw)) {
+    const fromTier = rateForTier(property, normalizeRoomTier(roomType))
+    return fromTier > 0 && posted === fromTier ? fromTier : null
+  }
+  const coarse = /private/.test(raw) ? "private" as const : /shar/.test(raw) ? "sharing" as const : null
+  if (coarse) {
+    return tierFromRate(property, coarse, posted) ? posted : null
+  }
+  const validRates = Object.values(TIER_RATES[property] ?? {})
+  return validRates.includes(posted) ? posted : null
+}
+
+// Is there already a live (non-cancelled) booking for this email + check-in?
+// Guards against duplicate submissions (double tab / lost response) that would
+// otherwise create a second Notion page, second set of links and — worst —
+// a second auto-debit subscription.
+async function existingActiveBooking(email: string, checkIn: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filter: {
+          and: [
+            { property: "✉️ Email", email: { equals: email } },
+            { property: "Check In Date", date: { equals: checkIn } },
+          ],
+        },
+        page_size: 5,
+      }),
+    })
+    if (!res.ok) return false // fail open — don't block a booking on a query error
+    const data = await res.json() as { results?: PageObjectResponse[] }
+    for (const p of data.results ?? []) {
+      if (!isFullPage(p)) continue
+      const statusProp = p.properties["Status"]
+      const status = statusProp?.type === "select" ? (statusProp.select?.name ?? "") : ""
+      if (/cancelled|expired/i.test(status)) continue
+      // A still-pending booking past the 25-minute deposit window is dead even
+      // if the payment_link.expired webhook hasn't landed yet — never block the
+      // guest's restart on it.
+      if (/pending/i.test(status)) {
+        const ageMs = Date.now() - new Date(p.created_time).getTime()
+        if (ageMs > DEPOSIT_PAYMENT_WINDOW_MINUTES * 60_000) continue
+      }
+      return true
+    }
+  } catch (e) {
+    console.warn("[create-payment-links] duplicate-booking check failed (allowing):", e)
+  }
+  return false
 }
 
 async function uploadFile(client: Client, file: File): Promise<string | null> {
@@ -30,7 +95,9 @@ async function uploadFile(client: Client, file: File): Promise<string | null> {
         filename: file.name,
       },
     })
-    await client.fileUploads.complete({ file_upload_id: upload.id })
+    // No fileUploads.complete() here: that API is for multi-part uploads only.
+    // A single-part send already leaves the upload in `uploaded`, ready to
+    // attach — calling complete() on it throws and would drop the file.
     return upload.id
   } catch (err) {
     console.error("[create-payment-links] File upload failed:", err)
@@ -44,33 +111,102 @@ function fileUploadProp(uploadId: string) {
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData()
+    // Public, side-effecting endpoint (uploads files, creates Notion pages, mints
+    // Razorpay links). Throttle per client to blunt scripted abuse before any of
+    // that work runs.
+    const limited = rateLimit(clientKey(req, "create-payment-links"), { limit: 8, windowMs: 60_000 })
+    if (limited) return limited
 
-    const property = formData.get("property") as "safina-plaza" | "peepal-tree"
+    // A body larger than the proxy buffer cap (next.config.ts
+    // proxyClientMaxBodySize) reaches us truncated, and formData() throws.
+    // Surface that as a clear 413 instead of a generic 500.
+    let formData: FormData
+    try {
+      formData = await req.formData()
+    } catch {
+      return NextResponse.json(
+        { error: "Your uploaded files are too large. Please keep the total upload under 50MB (compress photos if needed) and try again." },
+        { status: 413 }
+      )
+    }
+
+    const property = formData.get("property") as "safina-plaza"
     const fullName = formData.get("fullName") as string
-    const email = formData.get("email") as string
-    const contactNumber = (formData.get("contactNumber") as string).replace(/\D/g, "")
-    const monthlyRate = parseInt(formData.get("monthlyRate") as string, 10)
+    const email = (formData.get("email") as string)?.trim().toLowerCase()
+    const contactNumber = ((formData.get("contactNumber") as string) ?? "").replace(/\D/g, "")
+    const postedRate = parseInt(formData.get("monthlyRate") as string, 10)
     const checkIn = formData.get("checkIn") as string
     const checkOut = (formData.get("checkOut") as string) || null
+    const roomTypeRaw = (formData.get("roomType") as string) || ""
 
-    if (!property || !fullName || !email || !contactNumber || !monthlyRate || !checkIn) {
+    if (!property || !fullName || !email || !contactNumber || !postedRate || !checkIn) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    // Authoritative check-in date validation. checkInMin/checkInMax are the bed's
-    // availability window forwarded by the client; combined with the bed-vacancy
-    // guard below, they prevent booking a room for a date it isn't actually free.
+    // ── Money integrity: derive the rate server-side; never trust the client ──
+    if (!Number.isInteger(postedRate) || postedRate <= 0) {
+      return NextResponse.json({ error: "Invalid monthly rate." }, { status: 400 })
+    }
+    const monthlyRate = canonicalRate(property, roomTypeRaw, postedRate)
+    if (monthlyRate === null) {
+      return NextResponse.json({ error: "Monthly rate does not match the selected room's tariff." }, { status: 400 })
+    }
+
+    // House rule: pets are only allowed in private rooms. The wizard enforces
+    // this too — this is the server-side backstop against direct submissions.
+    if ((formData.get("petParent") as string) === "Yes" && !/private/i.test(roomTypeRaw)) {
+      return NextResponse.json({ error: "Pets are only allowed in private rooms. Please choose a private room to book with a pet." }, { status: 400 })
+    }
+
+    // 1 Week Exploratory Stay (≤7 nights): flat ₹25,000 rent, NO security
+    // deposit, private rooms only. Derived from the dates so a hand-crafted
+    // request can't pick a week-long stay at the pro-rated monthly price.
+    const exploratory = isExploratoryStay(checkIn, checkOut)
+    if (exploratory && !/private/i.test(roomTypeRaw)) {
+      return NextResponse.json({ error: "The 1 Week Exploratory Stay is available for private rooms only. Please choose a private room or a longer stay." }, { status: 400 })
+    }
+
+    // ── Stay-length validation: a missing/invalid checkOut would make the rent
+    // schedule open-ended and mint a 120-month auto-debit mandate. Require a
+    // real end date, after check-in and within the 4-month cap. ──
+    if (!checkOut) {
+      return NextResponse.json({ error: "A check-out date is required." }, { status: 400 })
+    }
+    if (checkOut <= checkIn) {
+      return NextResponse.json({ error: "Check-out must be after check-in." }, { status: 400 })
+    }
+    if (exceedsMaxStay(checkIn, checkOut)) {
+      return NextResponse.json({
+        error: `A single booking is capped at ${MAX_STAY_MONTHS} months (through ${maxStayCheckoutISO(checkIn)}). To stay longer, book up to the cap and extend or re-apply.`,
+      }, { status: 400 })
+    }
+
+    // Authoritative check-in date validation (IST). checkInMin/checkInMax are the
+    // bed's availability window forwarded by the client; combined with the
+    // bed-vacancy guard below, they help prevent booking a date the room isn't free.
     const checkInMin = (formData.get("checkInMin") as string) || ""
     const checkInMax = (formData.get("checkInMax") as string) || ""
-    if (checkIn < todayStr()) {
+    if (checkIn < istTodayISO()) {
       return NextResponse.json({ error: "Check-in date cannot be in the past." }, { status: 400 })
     }
     if (checkInMin && checkIn < checkInMin) {
       return NextResponse.json({ error: `This room is not available until ${checkInMin}.` }, { status: 400 })
     }
-    if (checkInMax && checkIn > checkInMax) {
+    // checkInMax is the next promised occupant's check-in — the whole stay
+    // (through check-out) must end on or before it, not just the check-in day.
+    if (checkInMax && checkIn >= checkInMax) {
       return NextResponse.json({ error: `This room is only available until ${checkInMax}.` }, { status: 400 })
+    }
+    if (checkInMax && checkOut > checkInMax) {
+      return NextResponse.json({ error: `This room is booked from ${checkInMax}; please shorten your stay to end by then.` }, { status: 400 })
+    }
+
+    // Idempotency: refuse a duplicate submission for the same email + check-in
+    // (a live booking already exists — the guest should use its existing links).
+    if (await existingActiveBooking(email, checkIn)) {
+      return NextResponse.json({
+        error: "You already have a booking in progress for this check-in date. Please check your email for the payment links, or contact us if you need help.",
+      }, { status: 409 })
     }
 
     const client = new Client({ auth: process.env.NOTION_TOKEN })
@@ -101,11 +237,13 @@ export async function POST(req: Request) {
     const workAddress = formData.get("workAddress") as string
     const placeOfWork = formData.get("placeOfWork") as string
     const linkedin = formData.get("linkedin") as string
+    const workReference = (formData.get("workReference") as string) || ""
     const idProofType = formData.get("idProofType") as string
     const idNumber = formData.get("idNumber") as string
     const emergencyName = formData.get("emergencyName") as string
     const emergencyNumber = formData.get("emergencyNumber") as string
     const emergencyRelation = formData.get("emergencyRelation") as string
+    const inspectionConsent = (formData.get("inspectionConsent") as string) || ""
     const petParent = formData.get("petParent") as string
     const petType = (formData.get("petType") as string) || ""
     const petName = (formData.get("petName") as string) || ""
@@ -114,6 +252,8 @@ export async function POST(req: Request) {
     const petGender = (formData.get("petGender") as string) || ""
     const petVaccinated = (formData.get("petVaccinated") as string) || ""
     const petNeutered = (formData.get("petNeutered") as string) || ""
+    const petHealthConcerns = (formData.get("petHealthConcerns") as string) || ""
+    const petTrained = (formData.get("petTrained") as string) || ""
     const petPhotoFile = formData.get("petPhoto") as File | null
     const petPhotoUploadId = petParent === "Yes" && petPhotoFile ? await uploadFile(client, petPhotoFile) : null
 
@@ -167,9 +307,17 @@ export async function POST(req: Request) {
       "📲 Emergency Contact Number": { rich_text: [{ text: { content: emergencyNumber } }] },
       "Emergency Contact Relation": { rich_text: [{ text: { content: emergencyRelation } }] },
       "Pet Parent": { multi_select: petParent ? [{ name: petParent }] : [] },
-      "📜 Rules and Regulations": { multi_select: [{ name: "Acceptance of Terms and Conditions" }] },
+      "📜 Rules and Regulations": {
+        multi_select: [
+          { name: "Acceptance of Terms and Conditions" },
+          ...(inspectionConsent === "Yes" ? [{ name: "Consent to Room Inspections" }] : []),
+        ],
+      },
       Status: { select: { name: "Deposit Pending" } },
       "Tariff": { number: monthlyRate },
+      // Ops marker: exploratory stays collected NO security deposit — nothing
+      // to refund at checkout, and the flat ₹25k rent is their only rent.
+      ...(exploratory ? { Tags: { multi_select: [{ name: "Exploratory" }] } } : {}),
     }
 
     if (photoUploadId) properties["📸 Recent Photograph"] = fileUploadProp(photoUploadId)
@@ -181,6 +329,13 @@ export async function POST(req: Request) {
     // never fail the booking on a missing Notion property. Tag stays on "Pet Parent".
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const children: any[] = []
+    if (workReference.trim()) {
+      children.push({
+        object: "block",
+        type: "paragraph",
+        paragraph: { rich_text: [{ type: "text", text: { content: `🔎 Work reference (verification): ${workReference}` } }] },
+      })
+    }
     if (petParent === "Yes") {
       const petLines = [
         `Pet type: ${petType}`,
@@ -190,6 +345,9 @@ export async function POST(req: Request) {
         `Gender: ${petGender}`,
         `Vaccinated: ${petVaccinated}`,
         `Spayed/Neutered: ${petNeutered}`,
+        `Professionally trained: ${petTrained || "No"}`,
+        `Health concerns: ${petHealthConcerns || "None"}`,
+        `Pet fee: ₹25,000 one-time deposit + ₹5,000/month recurring`,
       ].join("\n")
       children.push({
         object: "block",
@@ -246,94 +404,142 @@ export async function POST(req: Request) {
     })
     const notionPageId = guestPage.id
 
-    // 3 — Update room board (mark as incoming)
-    const roomMatch = room.match(/Room (\d+)(?:\s*·\s*Bed\s*([AB]))?/)
-    const parsedRoom = roomMatch?.[1] ?? room
-    const parsedBed = roomMatch?.[2] ?? null
+    // 2b — Archive KYC documents to the restricted Supabase bucket, keyed by
+    // the guest's Notion page id. Notion keeps the team-facing copy; Supabase
+    // is the locked-down system of record for sensitive documents.
+    await archiveGuestDocuments(notionPageId, {
+      photo: photoFile,
+      "id-proof": idProofFile,
+      signature: signatureFile,
+      passport: passportFile,
+      "pet-photo": petParent === "Yes" ? petPhotoFile : null,
+      "second-guest-id-proof": hasSecondGuest ? g2IdProofFile : null,
+    })
 
-    const bedPageId = await findBedPageId(property, parsedRoom, parsedBed)
-    let bedAssignmentDeferred = false
-    if (bedPageId) {
-      try {
-        await checkInGuest({
-          notionPageId: bedPageId,
-          property,
-          guestName: fullName,
-          gender: gender.toLowerCase() === "female" ? "female" : "male",
-          phone: contactNumber,
-          email,
-          checkInDate: checkIn,
-          checkOutDate: checkOut ?? undefined,
-          monthlyRate,
-        })
-      } catch (e) {
-        // Bed is still held by the current occupant (a future-dated booking into
-        // an "available from" room). Do NOT overwrite them — keep the booking and
-        // payment, and let ops assign the bed once the current guest checks out.
-        if (e instanceof BedOccupiedError) {
-          bedAssignmentDeferred = true
-          console.warn("[create-payment-links] Bed assignment deferred:", e.message)
-        } else {
-          throw e
-        }
-      }
-    }
+    // 3 — Room board: deliberately NOT touched here. An unpaid booking must
+    // never hold a bed — the bed is assigned by the Razorpay webhook via
+    // assignBedForBooking() only once the deposit link is actually PAID.
+    // Until then the room stays bookable by others; first paid deposit wins.
 
-    // 4 — Create deposit + maintenance Payment Link
-    const depositAmount = monthlyRate + MAINTENANCE_FEE
+    // 4 — Create deposit + maintenance Payment Link.
+    // Pet parents pay a one-time ₹25,000 pet deposit on top; the ₹5,000/mo pet
+    // fee (and any couple premium) fold into the effective monthly rate below so
+    // they're actually collected by the upfront link + subscription — not just
+    // written as page text. The stored Tariff stays the RENT rate so the
+    // deposit refund at checkout (= 1 month's rent) is unaffected.
+    const petDeposit = petParent === "Yes" ? PET_DEPOSIT_FEE : 0
+    const petMonthly = petParent === "Yes" ? PET_MONTHLY_FEE : 0
+    const couplePremium = hasSecondGuest ? COUPLE_PREMIUM_MONTHLY : 0
+    const scheduleRate = monthlyRate + petMonthly + couplePremium
+    // Exploratory week: no security deposit — Payment Link 1 is just the
+    // maintenance fee (+ pet deposit); the flat rent is the only rent charge.
+    const depositAmount = (exploratory ? 0 : monthlyRate) + MAINTENANCE_FEE + petDeposit
     const reqUrl = new URL(req.url)
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? `${reqUrl.protocol}//${reqUrl.host}`
     const depositCallbackUrl = `${baseUrl}/book/confirm?pageId=${notionPageId}&property=${property}&type=deposit`
 
-    const depositLink = await createDepositLink({
-      property,
-      guestName: fullName,
-      email,
-      phone: contactNumber,
-      amount: depositAmount,
-      notionPageId,
-      callbackUrl: depositCallbackUrl,
-    })
+    // If link creation fails after the guest page already exists, archive it so
+    // a retry doesn't leave an orphaned "Deposit Pending" page with no way to
+    // pay. (No bed to revert — beds are only assigned after the deposit is paid.)
+    async function rollback() {
+      try { await client.pages.update({ page_id: notionPageId, archived: true }) }
+      catch (e) { console.error("[create-payment-links] rollback: archive page failed:", e) }
+    }
 
-    // 5 — Calculate pro-rated rent for current month (if check-in is not on the 1st)
-    const proRated = calcProRatedRent(checkIn, monthlyRate)
+    // Exploratory week: the flat rent replaces the whole schedule — no
+    // pro-rating, no subscription, no final month (and no pet monthly; the
+    // flat price is all-in on rent, the pet deposit is still collected above).
+    const schedule = exploratory
+      ? { upfront: [], upfrontAmount: EXPLORATORY_WEEK_RENT, subscription: null, finalMonth: null }
+      : computeRentSchedule(checkIn, checkOut, scheduleRate)
+    const rentDescription = exploratory
+      ? `1 Week Exploratory Stay — ${checkIn} to ${checkOut} (flat rate, incl. GST)`
+      : describeRentMonths(schedule.upfront, scheduleRate)
+        + (petMonthly || couplePremium ? ` (incl. ${[petMonthly ? "₹5,000 pet fee" : "", couplePremium ? "couple premium" : ""].filter(Boolean).join(" + ")}/mo)` : "")
+    // The guest has a fixed window to pay the deposit; the link expires after
+    // it and the booking is void (payment_link.expired webhook marks it
+    // Expired) — they must restart the process.
+    const depositExpiresAtUnix = Math.floor(Date.now() / 1000) + DEPOSIT_PAYMENT_WINDOW_MINUTES * 60
+
+    let depositLink: { id: string; short_url: string }
     let proRatedLink: { id: string; short_url: string } | null = null
-
-    if (proRated) {
-      const proRatedCallbackUrl = `${baseUrl}/book/confirm?pageId=${notionPageId}&property=${property}&type=prorated`
-      proRatedLink = await createProRatedLink({
+    try {
+      depositLink = await createDepositLink({
         property,
         guestName: fullName,
         email,
         phone: contactNumber,
-        amount: proRated.amount,
-        description: proRated.description,
+        amount: depositAmount,
         notionPageId,
-        callbackUrl: proRatedCallbackUrl,
+        callbackUrl: depositCallbackUrl,
+        expireByUnix: depositExpiresAtUnix,
+        ...(exploratory ? { description: "Booking Fee (maintenance, no deposit) — Safina Plaza" } : {}),
       })
+
+      // 5 — Upfront rent Payment Link: pro-rated check-in month (or the full
+      // month when checking in on the 1st), plus the next month when a short
+      // (≤10-day) stub bundles it. Everything on this link is EXCLUDED from the
+      // subscription so the guest is never double-charged.
+      if (schedule.upfrontAmount > 0) {
+        const proRatedCallbackUrl = `${baseUrl}/book/confirm?pageId=${notionPageId}&property=${property}&type=prorated`
+        proRatedLink = await createProRatedLink({
+          property,
+          guestName: fullName,
+          email,
+          phone: contactNumber,
+          amount: schedule.upfrontAmount,
+          description: rentDescription,
+          notionPageId,
+          callbackUrl: proRatedCallbackUrl,
+        })
+      }
+    } catch (linkErr) {
+      console.error("[create-payment-links] link creation failed — rolling back:", linkErr)
+      await rollback()
+      return NextResponse.json({ error: "Could not create the payment links. Please try again." }, { status: 502 })
     }
 
-    // 6 — Create monthly subscription (starts 1st of month after check-in)
+    // 6 — Monthly auto-debit subscription: starts after the last upfront-paid
+    // month and runs for exactly the number of fully-covered months, so it
+    // stops itself at the check-out date. Skipped entirely when the upfront
+    // link(s) already cover the whole stay; a partial final month is collected
+    // by payment link closer to the date (see cron/extend-stay-reminders).
     let subscriptionId: string | undefined
     let subscriptionStartDate: string | undefined
-    try {
-      const sub = await createRentSubscription({
-        property,
-        guestName: fullName,
-        email,
-        phone: contactNumber,
-        monthlyRate,
-        checkInDate: checkIn,
-      })
-      subscriptionId = sub.id
-
-      // Calculate the subscription start date label for the UI
-      const base = new Date(checkIn + "T00:00:00")
-      const start = new Date(base.getFullYear(), base.getMonth() + 1, 1)
-      subscriptionStartDate = start.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
-    } catch (err) {
-      console.error("[create-payment-links] Subscription creation failed:", err)
+    if (schedule.subscription) {
+      try {
+        const sub = await createRentSubscription({
+          property,
+          guestName: fullName,
+          email,
+          phone: contactNumber,
+          monthlyRate: scheduleRate, // rent + pet/couple monthly, so it's actually debited
+          startISO: schedule.subscription.startISO,
+          totalCount: schedule.subscription.cycles,
+        })
+        subscriptionId = sub.id
+        subscriptionStartDate = new Date(schedule.subscription.startISO + "T00:00:00")
+          .toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+      } catch (err) {
+        console.error("[create-payment-links] Subscription creation failed:", err)
+      }
     }
+
+    // Persist the Razorpay ids on the booking page so the payment_link.expired
+    // webhook can cancel the sibling rent link + unauthorised subscription when
+    // the deposit window lapses. Best-effort.
+    try {
+      await client.pages.update({
+        page_id: notionPageId,
+        properties: {
+          "Razorpay IDs": { rich_text: [{ text: { content: JSON.stringify({
+            deposit: depositLink.id,
+            prorated: proRatedLink?.id ?? null,
+            subscription: subscriptionId ?? null,
+          }) } }] },
+        },
+      })
+    } catch (e) { console.warn("[create-payment-links] could not store Razorpay IDs:", e) }
 
     return NextResponse.json({
       ok: true,
@@ -342,14 +548,17 @@ export async function POST(req: Request) {
       depositLink: depositLink.short_url,
       depositLinkId: depositLink.id,
       depositAmount,
+      depositExpiresAt: depositExpiresAtUnix,
+      depositWindowMinutes: DEPOSIT_PAYMENT_WINDOW_MINUTES,
       proRatedLink: proRatedLink?.short_url ?? null,
       proRatedLinkId: proRatedLink?.id ?? null,
-      proRatedAmount: proRated?.amount ?? null,
-      proRatedDescription: proRated?.description ?? null,
+      proRatedAmount: proRatedLink ? schedule.upfrontAmount : null,
+      proRatedDescription: proRatedLink ? rentDescription : null,
       subscriptionId,
       subscriptionStartDate,
+      subscriptionCycles: schedule.subscription?.cycles ?? null,
+      finalMonthAmount: schedule.finalMonth?.amount ?? null,
       monthlyRate,
-      bedAssignmentDeferred,
     })
   } catch (err) {
     console.error("[api/bookings/create-payment-links]", err)

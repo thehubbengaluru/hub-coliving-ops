@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { requireAdminApi, authErrorResponse } from "@/lib/auth/api-guards"
 import { createDepositLink, createRentPaymentLink } from "@/lib/razorpay"
 import { getGuestContact } from "@/lib/notion"
 import type { Property } from "@/lib/types"
@@ -7,6 +8,8 @@ export const dynamic = "force-dynamic"
 
 export async function POST(req: Request) {
   try {
+    await requireAdminApi()
+
     const { notionPageId, property, amount, guestName, type } = await req.json() as {
       notionPageId: string
       property: Property
@@ -37,6 +40,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ id: link.id, url: link.short_url, status: link.status })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[api/razorpay/payment-link]", err)
     const message = err instanceof Error ? err.message : "Unknown error"
     return NextResponse.json({ error: message }, { status: 500 })

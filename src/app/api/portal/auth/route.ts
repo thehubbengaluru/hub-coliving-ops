@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server"
 import { Client, isFullPage } from "@notionhq/client"
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
+import { requirePortalGuest, authErrorResponse } from "@/lib/auth/api-guards"
 
 export const dynamic = "force-dynamic"
 
 const DS_FORM   = process.env.NOTION_DS_FORM!
 const DS_PLAZA  = process.env.NOTION_DS_PLAZA!
-const DS_PEEPAL = process.env.NOTION_DS_PEEPAL!
 
 function getEmail(page: PageObjectResponse): string | null {
   const p = page.properties["✉️ Email"]
@@ -54,38 +54,38 @@ async function findGuestByEmail(email: string): Promise<PageObjectResponse | nul
   return null
 }
 
-// Look up which property the guest's bed belongs to by searching both room boards.
-// Falls back to room-number inference (200+ → Plaza, 100–199 → Peepal Tree) if not on a board.
+// Confirm the guest's bed belongs to Safina Plaza by searching the room board.
+// Falls back to room-number inference (200+ → Plaza) if not on the board.
 async function resolveProperty(email: string, roomText?: string): Promise<string> {
   const client = new Client({ auth: process.env.NOTION_TOKEN })
-  for (const [ds, label] of [[DS_PLAZA, "Safina Plaza"], [DS_PEEPAL, "Peepal Tree"]] as const) {
-    if (!ds) continue
+  if (DS_PLAZA) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await (client.dataSources as any).query({
-        data_source_id: ds,
+        data_source_id: DS_PLAZA,
         filter: { property: "Email", email: { equals: email } },
         page_size: 1,
       })
-      if (res.results?.length > 0) return label
+      if (res.results?.length > 0) return "Safina Plaza"
     } catch { /* ignore per-DS errors */ }
   }
   // Fallback: extract the first number from the room string (e.g. "Room 316 · Bed A" → 316)
   if (roomText) {
     const match = roomText.match(/\d+/)
     const n = match ? parseInt(match[0], 10) : NaN
-    if (n >= 100 && n < 200) return "Peepal Tree"
     if (n >= 200) return "Safina Plaza"
   }
   return ""
 }
 
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const { email } = await req.json()
-    if (!email) return NextResponse.json({ error: "Email required" }, { status: 400 })
+    // Authenticated only, and the booking is resolved from the SESSION email —
+    // never a body-supplied one. This closes the enumeration/PII-leak hole where
+    // anyone could POST any email and receive that guest's full profile.
+    const { email } = await requirePortalGuest()
 
-    const normalised = email.trim().toLowerCase()
+    const normalised = email
     const page = await findGuestByEmail(normalised)
 
     if (!page) {
@@ -122,6 +122,8 @@ export async function POST(req: Request) {
       emergencyRelation: getText(page, "Emergency Contact Relation"),
     })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[portal/auth]", err)
     return NextResponse.json({ error: "Failed to look up booking" }, { status: 500 })
   }

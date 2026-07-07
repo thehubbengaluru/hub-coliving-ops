@@ -33,9 +33,8 @@ export default function TermsAndConditionsPage() {
           <section>
             <p>
               These Terms and Conditions (<strong>"Terms"</strong>) govern your use of the co-living facilities,
-              booking platform, and resident portal operated by <strong>Safina Hotels</strong> (Safina Plaza) and{" "}
-              <strong>Safina Ventures Private Limited</strong> (Peepal Tree), collectively referred to as{" "}
-              <strong>"The Hub"</strong>, <strong>"we"</strong>, or <strong>"us"</strong>.
+              booking platform, and resident portal operated by <strong>Safina Hotels</strong> (Safina Plaza),
+              referred to as <strong>"The Hub"</strong>, <strong>"we"</strong>, or <strong>"us"</strong>.
             </p>
             <p className="mt-3">
               By submitting a booking form, making a payment, or residing at any of our properties, you
@@ -85,8 +84,29 @@ export default function TermsAndConditionsPage() {
             <h2 className="text-lg font-bold text-gray-900 mb-3">3. Payments & Rent</h2>
             <ul className="list-disc pl-5 space-y-2">
               <li>
-                Rent is due on the <strong>1st of each calendar month</strong>. A late payment fee may be
-                applied for payments received after the due date, as communicated on your invoice.
+                <strong>How rent is collected:</strong> the pro-rated first month (and, where applicable, the
+                following month) is paid by payment link before check-in; months paid by link are never
+                auto-debited. Each remaining full month is collected in advance via a Razorpay auto-debit
+                mandate, attempted from 2 days before the month begins. If a stay ends mid-month, the final
+                month is pro-rated to the check-out date and collected by payment link — never by auto-debit.
+              </li>
+              <li>
+                Rent is due on the <strong>1st of each calendar month</strong> and is payable at the agreed
+                tariff up to the 3rd. If an auto-debit fails, the guest is notified and provided a payment
+                link instead. From the <strong>4th of the month</strong>, a late payment fee of{" "}
+                <strong>₹500 per day of delay</strong> applies, accumulating daily up to the{" "}
+                <strong>10th of the month</strong> (₹3,500 in total).
+              </li>
+              <li>
+                If rent remains unpaid on the <strong>10th of the month</strong>, the guest is in default and
+                must <strong>vacate the premises immediately</strong>. The security deposit stands{" "}
+                <strong>forfeited</strong>, and all outstanding rent and accrued late fees remain payable in full.
+              </li>
+              <li>
+                <strong>Stay extensions</strong> are treated as a fresh booking under a fresh contract, subject
+                to availability (of the same room or an alternative). The security deposit carries forward and
+                is mapped to the new contract; moving to a higher-tariff room requires a deposit top-up equal
+                to the difference.
               </li>
               <li>
                 All payments are processed in Indian Rupees (INR) via Razorpay. We accept UPI, net banking,

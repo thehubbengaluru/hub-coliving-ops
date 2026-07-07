@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { blockBed, unblockBed, BedOccupiedError } from "@/lib/notion"
+import { requireAdminApi, authErrorResponse } from "@/lib/auth/api-guards"
 import type { Property } from "@/lib/types"
 
 export const dynamic = "force-dynamic"
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic"
 // DELETE → make it available again.
 export async function POST(req: Request) {
   try {
+    await requireAdminApi()
     const { notionPageId, property, reason, fromDate, untilDate, blockedBy } = await req.json() as {
       notionPageId: string
       property: Property
@@ -22,6 +24,8 @@ export async function POST(req: Request) {
     await blockBed({ notionPageId, property, reason: reason.trim(), fromDate, untilDate, blockedBy: blockedBy.trim() })
     return NextResponse.json({ ok: true })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[api/rooms/block POST]", err)
     if (err instanceof BedOccupiedError) return NextResponse.json({ error: err.message }, { status: 409 })
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 })
@@ -30,11 +34,14 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
+    await requireAdminApi()
     const { notionPageId, property } = await req.json() as { notionPageId: string; property: Property }
     if (!notionPageId) return NextResponse.json({ error: "notionPageId required" }, { status: 400 })
     await unblockBed({ notionPageId, property })
     return NextResponse.json({ ok: true })
   } catch (err) {
+    const authRes = authErrorResponse(err)
+    if (authRes) return authRes
     console.error("[api/rooms/block DELETE]", err)
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 })
   }
