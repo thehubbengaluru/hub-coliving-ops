@@ -37,11 +37,11 @@ const properties = [
     fromPrice: "₹21,500",
     gradient: "linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)",
     pricing: [
-      { label: "1-week short stay",        type: "Any",     monthly: "₹25,000", flat: true,  popular: false, best: false },
-      { label: "Standard sharing",          type: "Sharing", monthly: "₹21,500", flat: false, popular: false, best: false },
-      { label: "Deluxe sharing",            type: "Sharing", monthly: "₹25,000", flat: false, popular: true,  best: false },
-      { label: "Private room",              type: "Private", monthly: "₹43,500", flat: false, popular: false, best: false },
-      { label: "Deluxe private",            type: "Private", monthly: "₹50,000", flat: false, popular: false, best: false },
+      { label: "1-week short stay", type: "Private only",  monthly: "₹25,000", flat: true,  popular: false, best: false },
+      { label: "Standard Double",   type: "Twin sharing",  monthly: "₹21,500", flat: false, popular: false, best: false },
+      { label: "Premium Double",    type: "Twin sharing",  monthly: "₹25,000", flat: false, popular: true,  best: false },
+      { label: "Standard Single",   type: "Private room",  monthly: "₹43,500", flat: false, popular: false, best: false },
+      { label: "Premium Single",    type: "Private room",  monthly: "₹50,000", flat: false, popular: false, best: false },
     ],
   },
   {
@@ -60,9 +60,9 @@ const properties = [
     fromPrice: "₹18,550",
     gradient: "linear-gradient(135deg, #2d1b00 0%, #4a2c00 40%, #6b3f00 100%)",
     pricing: [
-      { label: "1-week short stay",  type: "Any",     monthly: "₹25,000", flat: true,  popular: false, best: false },
-      { label: "Shared room",        type: "Sharing", monthly: "₹18,550", flat: false, popular: false, best: true  },
-      { label: "Private room",       type: "Private", monthly: "₹39,100", flat: false, popular: false, best: false },
+      { label: "1-week short stay", type: "Private only", monthly: "₹25,000", flat: true,  popular: false, best: false },
+      { label: "Standard Double",   type: "Twin sharing", monthly: "₹18,550", flat: false, popular: false, best: true  },
+      { label: "Standard Single",   type: "Private room", monthly: "₹39,100", flat: false, popular: false, best: false },
     ],
   },
 ]
@@ -1199,7 +1199,7 @@ export default function LandingPage() {
             <div className="grid grid-cols-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400 px-6 py-4 border-b border-gray-100">
               <span>Plan</span>
               <span>Type</span>
-              <span>Monthly (Incl. GST)</span>
+              <span>Rate (Incl. GST)</span>
             </div>
             {pricingData.pricing.map((row, i) => (
               <div
@@ -1221,6 +1221,13 @@ export default function LandingPage() {
                 <div className="text-[13px] text-gray-500">{row.type}</div>
                 <div className="flex items-center gap-2">
                   <span className="text-[15px] font-bold text-black">{row.monthly}</span>
+                  {/* Spell out the unit per row — the 1-week stay is a flat
+                      charge, not a monthly rate, and sitting them in one
+                      column without units is what made the two read as
+                      contradictory. */}
+                  <span className="text-[12px] text-gray-400">
+                    {row.flat ? "for the week" : "/month"}
+                  </span>
                   {row.popular && (
                     <span
                       className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
