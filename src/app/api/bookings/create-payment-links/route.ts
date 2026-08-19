@@ -3,6 +3,7 @@ import { Client, isFullPage } from "@notionhq/client"
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
 import {
   createDepositLink,
+  razorpayEnabled,
   createProRatedLink,
   createRentSubscription,
 } from "@/lib/razorpay"
@@ -141,6 +142,17 @@ export async function POST(req: Request) {
 
     if (!property || !fullName || !email || !contactNumber || !postedRate || !checkIn) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    }
+
+    // Refuse early if this property has no Razorpay account configured — before
+    // any booking record is written. Otherwise the guest completes the form and
+    // the flow dies at link creation, leaving an orphan booking behind.
+    if (!razorpayEnabled(property)) {
+      console.error(`[create-payment-links] Razorpay not configured for ${property} — set RZP_KEY_ID/SECRET for it`)
+      return NextResponse.json(
+        { error: "Online booking isn't available for this property yet. Please WhatsApp us on +91 91139 92047 and we'll set it up for you." },
+        { status: 503 },
+      )
     }
 
     // ── Money integrity: derive the rate server-side; never trust the client ──

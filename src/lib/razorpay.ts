@@ -10,6 +10,19 @@ function getClient(property: Property) {
   })
 }
 
+/**
+ * True when this property has Razorpay credentials configured. Mirrors
+ * zohoEnabled(). Callers MUST check this before starting a booking: without it
+ * the client is built with undefined keys and only fails deep inside the flow,
+ * after the guest has filled the form and a booking record may already exist.
+ */
+export function razorpayEnabled(property: Property): boolean {
+  const isPlaza = property === "safina-plaza"
+  const id     = isPlaza ? process.env.RZP_KEY_ID_PLAZA     : process.env.RZP_KEY_ID_PEEPAL
+  const secret = isPlaza ? process.env.RZP_KEY_SECRET_PLAZA : process.env.RZP_KEY_SECRET_PEEPAL
+  return !!(id && secret)
+}
+
 export interface RazorpayLink {
   id: string
   short_url: string
