@@ -4,16 +4,18 @@ import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import {
   MapPin, Phone, ChevronDown, ChevronUp, ArrowRight,
-  Building2, X, CheckCircle2, Loader2, Wifi, Home,
-  Clock, Zap, Droplets, ShieldCheck, Sofa, Users, Star,
-  Menu, Camera,
+  X, CheckCircle2, Loader2, Wifi,
+  Clock, Zap, Droplets, ShieldCheck,
+  Menu, Camera, Brush, Dumbbell, Refrigerator, WashingMachine,
+  Tv, CookingPot, ChefHat,
 } from "lucide-react"
-import { formatAvailableFrom, getRoomLabel, type BedListing } from "@/lib/inventory"
+import { getRoomLabel, type BedListing } from "@/lib/inventory"
+import { EXPLORATORY_WEEK_RENT, MAINTENANCE_FEE } from "@/lib/stay"
 import { createClient as createSupabaseClient } from "@/lib/supabase/client"
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const AMBER      = "#F9A91F"
-const DARK       = "#0A0A0A"
+// ─── Design tokens (THB brand kit) ─────────────────────────────────────────────
+const AMBER      = "#fe8d01"
+const DARK       = "#000000"
 const WARM_WHITE = "#FAF9F7"
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
@@ -42,11 +44,62 @@ const properties = [
       { label: "Deluxe private",            type: "Private", monthly: "₹50,000", flat: false, popular: false, best: false },
     ],
   },
+  {
+    id: "peepal-tree" as const,
+    name: "Peepal Tree @ The Hub",
+    shortName: "Peepal Tree",
+    tagline: "Intimate co-living. St Johns Road.",
+    area: "St Johns Road",
+    address: "35/1, St Johns Rd, Sivanchetti Gardens, Bengaluru 560042",
+    beds: 19,
+    privateRooms: 4,
+    sharedBeds: 15,
+    reception: "8 am – 8 pm",
+    security: "CCTV + guard 8 am – 8 pm",
+    whatsapp: "919113992047",
+    fromPrice: "₹18,550",
+    gradient: "linear-gradient(135deg, #2d1b00 0%, #4a2c00 40%, #6b3f00 100%)",
+    pricing: [
+      { label: "1-week short stay",  type: "Any",     monthly: "₹25,000", flat: true,  popular: false, best: false },
+      { label: "Shared room",        type: "Sharing", monthly: "₹18,550", flat: false, popular: false, best: true  },
+      { label: "Private room",       type: "Private", monthly: "₹39,100", flat: false, popular: false, best: false },
+    ],
+  },
 ]
+
+// Hero slideshow frames (from the co-living shoot). WebP, ~100KB each.
+const HERO_SLIDES = [
+  "/assets/hero/hero-1.webp",
+  "/assets/hero/hero-2.webp",
+  "/assets/hero/hero-3.webp",
+  "/assets/hero/hero-4.webp",
+  "/assets/hero/hero-5.webp",
+  "/assets/hero/hero-6.webp",
+]
+
+// Room photos, keyed by room SIZE. The shoot covers single (private) and double
+// (twin-sharing) rooms; Standard/Premium share a room layout and differ on
+// finish + amenities, so both tiers draw from the same set.
+const ROOM_PHOTOS: Record<"Single" | "Double", string[]> = {
+  Single: [
+    "/assets/rooms/single/single-1.webp",
+    "/assets/rooms/single/single-2.webp",
+    "/assets/rooms/single/single-3.webp",
+    "/assets/rooms/single/single-4.webp",
+    "/assets/rooms/single/single-5.webp",
+  ],
+  Double: [
+    "/assets/rooms/double/double-1.webp",
+    "/assets/rooms/double/double-2.webp",
+    "/assets/rooms/double/double-3.webp",
+    "/assets/rooms/double/double-4.webp",
+    "/assets/rooms/double/double-5.webp",
+  ],
+}
 
 const benefits = [
   { title: "All-Inclusive Rent",    desc: "Wi-Fi, housekeeping, power backup, hot water — all in one price." },
-  { title: "Prime Location",        desc: "Shivaji Nagar, one of Bengaluru's best-connected neighbourhoods." },
+  { title: "Prime Locations",       desc: "Shivaji Nagar & St Johns Road, two of Bengaluru's best-connected neighbourhoods." },
   { title: "Verified Community",    desc: "Professionals, students, and creatives who value good living." },
   { title: "Zero Maintenance",      desc: "We handle it. You just live. No landlord calls, no repair stress." },
   { title: "Flexible Stays",        desc: "From 1 week to 4 months, on a monthly cycle. Renew anytime." },
@@ -80,7 +133,7 @@ const faqs = [
   },
   {
     q: "Are meals included?",
-    a: "No, meals are not included. The property has a shared kitchen you can use.",
+    a: "No, meals are not included. Both properties have a shared kitchen you can use.",
   },
 ]
 
@@ -88,7 +141,7 @@ const faqs = [
 
 interface EnquiryTarget {
   bed: BedListing | null
-  property: "safina-plaza"
+  property: "safina-plaza" | "peepal-tree"
 }
 
 function EnquiryModal({ target, onClose }: { target: EnquiryTarget | null; onClose: () => void }) {
@@ -144,7 +197,7 @@ function EnquiryModal({ target, onClose }: { target: EnquiryTarget | null; onClo
   }, [name, phone, email, roomType, notes, target])
 
   if (!target) return null
-  const propertyName = "The Hub Bengaluru"
+  const propertyName = target.property === "peepal-tree" ? "Peepal Tree @ The Hub" : "The Hub Bengaluru"
 
   return (
     <div
@@ -158,7 +211,7 @@ function EnquiryModal({ target, onClose }: { target: EnquiryTarget | null; onClo
       >
         <div className="flex items-start justify-between p-6 border-b border-gray-100">
           <div>
-            <h3 className="text-[17px] font-semibold text-black" style={{ fontFamily: "Cinzel, serif" }}>
+            <h3 className="text-[17px] font-semibold text-black" style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}>
               {target.bed ? `Enquire — ${getRoomLabel(target.bed)}` : `Enquire — ${propertyName}`}
             </h3>
             <p className="text-[12px] text-gray-400 mt-1">{propertyName} · We&apos;ll reply within a few hours</p>
@@ -255,57 +308,150 @@ function EnquiryModal({ target, onClose }: { target: EnquiryTarget | null; onClo
 
 // ─── Bed Card ─────────────────────────────────────────────────────────────────
 
-function BedCard({ bed, onEnquire }: { bed: BedListing; onEnquire: (b: BedListing) => void }) {
-  const isNow     = bed.status === "Vacant"
-  const isSoon    = bed.status === "Occupied" && bed.availableFrom !== null
-  const isPrivate = bed.size === "Single"
+// ─── Room type card ───────────────────────────────────────────────────────────
+// Guests choose a room TYPE (single/double × standard/premium), never an
+// individual bed — listing every bed caused decision fatigue and advertised how
+// much inventory sits empty. Exact room allocation happens after booking.
+
+// The exploratory 1-week stay is private-only (mirrors the booking wizard's
+// duration gate), so switching to "week" narrows the visible room types.
+type StayMode = "monthly" | "week"
+
+type RoomTypeGroup = {
+  key:        string
+  size:       "Single" | "Double"
+  category:   "Standard" | "Premium"
+  label:      string
+  monthlyRate: number
+  vacantNow:  number
+  soonest:    string | null
+  photos:     string[]
+}
+
+function RoomTypeCard({
+  group, onEnquire, stayMode,
+}: {
+  group: RoomTypeGroup
+  onEnquire: () => void
+  stayMode: StayMode
+}) {
+  const [idx, setIdx] = useState(0)
+  const n = group.photos.length
+  const available = group.vacantNow > 0
+  const isWeek = stayMode === "week"
 
   return (
     <div
-      className="rounded-2xl border p-5 flex flex-col gap-4 transition-all"
-      style={{
-        backgroundColor: isNow ? "#fffbf0" : "#fff",
-        borderColor: isNow ? "#f9a91f40" : "#f3f4f6",
-        boxShadow: isNow ? "0 4px 24px rgba(249,169,31,0.10)" : "0 2px 12px rgba(0,0,0,0.05)",
-        opacity: bed.status === "Blocked" ? 0.45 : 1,
-      }}
+      className="rounded-2xl border overflow-hidden flex flex-col bg-white"
+      style={{ borderColor: "#f0f0f0", boxShadow: "0 4px 28px rgba(0,0,0,0.07)" }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-[14px] font-semibold text-black">{getRoomLabel(bed)}</div>
-          <div className="text-[11px] text-gray-400 mt-0.5">
-            {bed.category} · {isPrivate ? "Private room" : "Shared bed"}
-          </div>
-        </div>
+      {/* Gallery */}
+      <div className="relative bg-gray-100" style={{ aspectRatio: "16 / 10" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={group.photos[idx]}
+          alt={`${group.label} at The Hub — photo ${idx + 1} of ${n}`}
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="lazy"
+        />
+        {n > 1 && (
+          <>
+            <button
+              onClick={() => setIdx(i => (i - 1 + n) % n)}
+              aria-label="Previous photo"
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center transition-colors"
+              style={{ backgroundColor: "rgba(0,0,0,0.45)", color: "#fff" }}
+            >
+              ‹
+            </button>
+            <button
+              onClick={() => setIdx(i => (i + 1) % n)}
+              aria-label="Next photo"
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center transition-colors"
+              style={{ backgroundColor: "rgba(0,0,0,0.45)", color: "#fff" }}
+            >
+              ›
+            </button>
+            <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+              {group.photos.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setIdx(i)}
+                  aria-label={`Go to photo ${i + 1}`}
+                  className="w-1.5 h-1.5 rounded-full transition-all"
+                  style={{ backgroundColor: i === idx ? "#fff" : "rgba(255,255,255,0.45)" }}
+                />
+              ))}
+            </div>
+          </>
+        )}
         <span
-          className="shrink-0 text-[11px] font-medium px-2.5 py-1 rounded-full"
-          style={
-            isNow  ? { backgroundColor: "#dcfce7", color: "#166534" } :
-            isSoon ? { backgroundColor: "#fff7ed", color: "#9a3412" } :
-                     { backgroundColor: "#f3f4f6", color: "#6b7280" }
-          }
+          className="absolute top-3 left-3 text-[11px] font-semibold px-2.5 py-1 rounded-full"
+          style={{ backgroundColor: AMBER, color: "#000" }}
         >
-          {bed.status === "Blocked" ? "Blocked" : formatAvailableFrom(bed)}
+          {group.category}
         </span>
       </div>
 
-      <div className="flex items-end justify-between">
+      {/* Body */}
+      <div className="p-5 flex flex-col gap-3 flex-1">
         <div>
-          <div className="text-[18px] font-bold text-black" style={{ fontFamily: "Cinzel, serif" }}>
-            ₹{bed.monthlyRate.toLocaleString("en-IN")}
-            <span className="text-[12px] font-normal text-gray-400"> /mo</span>
-          </div>
-          <div className="text-[11px] text-gray-400 mt-0.5">₹{bed.weeklyRate.toLocaleString("en-IN")} for 1 week · Incl. GST</div>
+          <h3 className="text-[18px] text-black" style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}>
+            {group.label}
+          </h3>
+          <p className="text-[13px] text-gray-500 mt-0.5">
+            {group.size === "Single" ? "Private room, just yours" : "One bed in a twin-sharing room"}
+          </p>
         </div>
-        {(isNow || isSoon) && (
+
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-[22px] font-bold text-black">
+            ₹{(isWeek ? EXPLORATORY_WEEK_RENT : group.monthlyRate).toLocaleString("en-IN")}
+          </span>
+          <span className="text-[13px] text-gray-400">
+            {isWeek ? "flat for the week · incl. GST" : "/month · incl. GST"}
+          </span>
+        </div>
+        {/* The exploratory week is only offered on private rooms, so the
+            cross-reference line is shown on those cards only — advertising it on
+            a sharing room would promise a duration checkout then refuses. */}
+        <p className="text-[12px] text-gray-400 -mt-2">
+          {isWeek
+            ? `No deposit · ₹${MAINTENANCE_FEE.toLocaleString("en-IN")} maintenance fee`
+            : group.size === "Single"
+              ? `1-week stay ₹${EXPLORATORY_WEEK_RENT.toLocaleString("en-IN")} flat`
+              : "Deposit: 1 month's rent"}
+        </p>
+
+        {/* Scarcity signal — a count, never a full inventory dump */}
+        <p className="text-[13px]">
+          {available ? (
+            <span className="font-semibold text-green-700">
+              {group.vacantNow} {group.vacantNow === 1 ? "room" : "rooms"} available now
+            </span>
+          ) : group.soonest ? (
+            <span className="text-gray-500">Next available {group.soonest}</span>
+          ) : (
+            <span className="text-gray-400">Fully booked — join the waitlist</span>
+          )}
+        </p>
+
+        <div className="mt-auto pt-2 flex gap-2">
+          <a
+            href="/book"
+            className="flex-1 text-center px-4 py-2.5 rounded-full text-[13px] font-semibold text-black transition-opacity hover:opacity-90"
+            style={{ backgroundColor: AMBER }}
+          >
+            Book now
+          </a>
           <button
-            onClick={() => onEnquire(bed)}
-            className="text-[12px] font-semibold px-4 py-2 rounded-full text-black hover:opacity-80 transition-all"
-            style={{ backgroundColor: isNow ? AMBER : "#f3f4f6" }}
+            onClick={onEnquire}
+            className="px-4 py-2.5 rounded-full text-[13px] font-medium text-gray-700 border transition-colors hover:border-gray-400"
+            style={{ borderColor: "#e5e7eb" }}
           >
             Enquire
           </button>
-        )}
+        </div>
       </div>
     </div>
   )
@@ -335,10 +481,16 @@ export default function LandingPage() {
   }, [])
 
   // Property switcher (availability)
-  const activeProperty = "safina-plaza" as const
+  const [activeProperty, setActiveProperty] = useState<"safina-plaza" | "peepal-tree">("safina-plaza")
 
   // Pricing tab
-  const pricingProperty = "safina-plaza" as const
+  const [pricingProperty, setPricingProperty] = useState<"safina-plaza" | "peepal-tree">("safina-plaza")
+
+  // Hero slideshow
+  const [heroSlide, setHeroSlide] = useState(0)
+
+  // Stay length chosen on the availability step (1-week short stay vs monthly)
+  const [stayMode, setStayMode] = useState<StayMode>("monthly")
 
   // FAQ
   const [openFaq, setOpenFaq] = useState<number | null>(null)
@@ -351,14 +503,23 @@ export default function LandingPage() {
   const [beds, setBeds]             = useState<BedListing[]>([])
   const [loading, setLoading]       = useState(true)
   const [fetchErr, setFetchErr]     = useState<string | null>(null)
-  const [availabilityFilter, setAvailabilityFilter] = useState<"all" | "Vacant" | "shared" | "private">("all")
-  const [showAll, setShowAll]       = useState(false)
 
   // Scroll listener
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 80)
     window.addEventListener("scroll", onScroll, { passive: true })
     return () => window.removeEventListener("scroll", onScroll)
+  }, [])
+
+  // Hero slideshow. Honours prefers-reduced-motion (holds on the first frame)
+  // and stops while the tab is hidden so it isn't burning cycles in background.
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    const id = setInterval(() => {
+      if (document.hidden) return
+      setHeroSlide(s => (s + 1) % HERO_SLIDES.length)
+    }, 5000)
+    return () => clearInterval(id)
   }, [])
 
   // Fetch availability
@@ -372,25 +533,51 @@ export default function LandingPage() {
 
   // Computed availability
   const propertyBeds = beds.filter(b => b.property === activeProperty)
-  const filteredBeds = propertyBeds.filter(b => {
-    if (b.status === "Blocked") return false
-    if (availabilityFilter === "Vacant")  return b.status === "Vacant"
-    if (availabilityFilter === "shared")  return b.size === "Double"
-    if (availabilityFilter === "private") return b.size === "Single"
-    return true
-  })
-  const sortedBeds = [...filteredBeds].sort((a, b) => {
-    if (a.status === "Vacant" && b.status !== "Vacant") return -1
-    if (b.status === "Vacant" && a.status !== "Vacant") return 1
-    if (a.availableFrom && b.availableFrom) return a.availableFrom.localeCompare(b.availableFrom)
-    if (a.availableFrom) return -1
-    if (b.availableFrom) return 1
-    return 0
-  })
-  const displayedBeds = showAll ? sortedBeds : sortedBeds.slice(0, 9)
   const vacantNow = propertyBeds.filter(b => b.status === "Vacant").length
 
-  const openEnquiry = useCallback((bed: BedListing | null, property: "safina-plaza") => {
+  // Roll individual beds up into the four bookable room types. Guests pick a
+  // type; we allocate the specific room afterwards. Types with no inventory at
+  // this property simply don't appear (Peepal Tree has no Premium tier).
+  const roomTypeGroups: RoomTypeGroup[] = (() => {
+    const map = new Map<string, RoomTypeGroup>()
+    for (const b of propertyBeds) {
+      if (b.status === "Blocked") continue
+      const key = `${b.category}-${b.size}`
+      let g = map.get(key)
+      if (!g) {
+        g = {
+          key,
+          size: b.size,
+          category: b.category,
+          label: `${b.category} ${b.size === "Single" ? "Single" : "Double"} Room`,
+          monthlyRate: b.monthlyRate,
+          vacantNow: 0,
+          soonest: null,
+          photos: ROOM_PHOTOS[b.size],
+        }
+        map.set(key, g)
+      }
+      if (b.status === "Vacant") g.vacantNow++
+      else if (b.availableFrom && (!g.soonest || b.availableFrom < g.soonest)) g.soonest = b.availableFrom
+    }
+    const order = ["Standard-Double", "Premium-Double", "Standard-Single", "Premium-Single"]
+    return [...map.values()]
+      .map(g => ({
+        ...g,
+        soonest: g.soonest
+          ? new Date(g.soonest + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+          : null,
+      }))
+      .sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
+  })()
+
+  // A 1-week stay is bookable on private rooms only — don't surface sharing
+  // rooms under that mode or the wizard will reject the duration downstream.
+  const visibleRoomTypes = stayMode === "week"
+    ? roomTypeGroups.filter(g => g.size === "Single")
+    : roomTypeGroups
+
+  const openEnquiry = useCallback((bed: BedListing | null, property: "safina-plaza" | "peepal-tree") => {
     setEnquiryTarget({ bed, property })
     setEnquiryModal(true)
   }, [])
@@ -403,8 +590,9 @@ export default function LandingPage() {
         @keyframes ambient-pulse { 0%,100%{opacity:0.13} 50%{opacity:0.20} }
         @keyframes scroll-bounce { 0%,100%{transform:translateY(0) translateX(-50%)} 50%{transform:translateY(8px) translateX(-50%)} }
         .ambient-orb { animation: ambient-pulse 5s ease-in-out infinite; }
+        .hero-slide { transition: opacity 1.6s ease-in-out; }
         .scroll-hint { animation: scroll-bounce 2s ease-in-out infinite; position:absolute; bottom:2rem; left:50%; }
-        @media (prefers-reduced-motion: reduce) { .ambient-orb, .scroll-hint { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .ambient-orb, .scroll-hint { animation: none; } .hero-slide { transition: none; } }
       `}</style>
 
       <EnquiryModal
@@ -424,18 +612,13 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5">
-            <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-              style={{ backgroundColor: AMBER }}
-            >
-              <span className="text-black font-bold text-[10px]">TH</span>
-            </div>
-            <span
-              className="text-[18px] font-normal tracking-wide transition-colors"
-              style={{ fontFamily: "Calistoga, serif", color: scrolled ? "#111" : "#fff" }}
-            >
-              The Hub
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/assets/Hub_Logo__01.png"
+              alt="The Hub Co-Living"
+              className="h-7 w-auto transition-[filter] duration-300"
+              style={{ filter: scrolled ? "none" : "brightness(0) invert(1)" }}
+            />
           </Link>
 
           {/* Desktop links */}
@@ -563,6 +746,31 @@ export default function LandingPage() {
         className="relative flex items-center justify-center overflow-hidden"
         style={{ backgroundColor: DARK, minHeight: "100vh" }}
       >
+        {/* Property slideshow — crossfades behind the headline. Purely
+            decorative, so it is aria-hidden and pauses under reduced-motion. */}
+        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+          {HERO_SLIDES.map((src, i) => (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              key={src}
+              src={src}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover hero-slide"
+              style={{ opacity: i === heroSlide ? 1 : 0 }}
+              loading={i === 0 ? "eager" : "lazy"}
+              fetchPriority={i === 0 ? "high" : "low"}
+            />
+          ))}
+          {/* Scrim — keeps the white/orange headline readable over any frame */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.58) 45%, rgba(0,0,0,0.80) 100%)",
+            }}
+          />
+        </div>
+
         {/* Ambient orbs */}
         <div
           className="ambient-orb pointer-events-none"
@@ -609,7 +817,7 @@ export default function LandingPage() {
 
           <h1
             className="text-[52px] sm:text-[68px] lg:text-[84px] font-normal leading-[1.05] text-white mb-6"
-            style={{ fontFamily: "Cinzel, serif" }}
+            style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
           >
             Live more.<br />
             <span style={{ color: AMBER }}>Stress less.</span>
@@ -637,18 +845,15 @@ export default function LandingPage() {
             </a>
           </div>
 
-          {/* Stat pills */}
-          <div className="flex flex-wrap gap-3 justify-center">
+          {/* Stat line */}
+          <div className="flex flex-wrap items-center gap-2.5 justify-center text-[13px]" style={{ color: "rgba(255,255,255,0.55)" }}>
             {[
               "55+ beds across 2 properties",
               "From ₹18,550 / month",
               "Bengaluru, KA",
-            ].map(text => (
-              <span
-                key={text}
-                className="text-[13px] text-white px-4 py-1.5 rounded-full"
-                style={{ backgroundColor: "rgba(255,255,255,0.09)", border: "1px solid rgba(255,255,255,0.12)" }}
-              >
+            ].map((text, i) => (
+              <span key={text} className="flex items-center gap-2.5">
+                {i > 0 && <span style={{ color: "rgba(255,255,255,0.25)" }}>·</span>}
                 {text}
               </span>
             ))}
@@ -661,25 +866,36 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── STATS BAR ── */}
-      <section className="bg-white border-y border-gray-100 py-12 px-4 sm:px-6">
-        <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
-          {[
-            { value: "33",      label: "Beds at Safina Plaza" },
-            { value: "8",       label: "Private rooms" },
-            { value: "₹21,500", label: "Starting monthly rate" },
-            { value: "24/7",    label: "Support & security" },
-          ].map(({ value, label }) => (
-            <div key={value} className="text-center">
-              <div
-                className="text-[38px] sm:text-[44px] font-normal leading-none mb-2"
-                style={{ fontFamily: "Cinzel, serif", color: AMBER }}
-              >
-                {value}
+      {/* ── AMENITIES ── */}
+      <section className="bg-white border-y border-gray-100 py-16 px-4 sm:px-6">
+        <div className="max-w-5xl mx-auto">
+          <h2
+            className="text-[28px] sm:text-[32px] text-black mb-10"
+            style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
+          >
+            Amenities
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-y-8 gap-x-12">
+            {[
+              { icon: Brush,          label: "Housekeeping" },
+              { icon: ShieldCheck,    label: "24x7 Security" },
+              { icon: Camera,         label: "CCTV" },
+              { icon: Wifi,           label: "Wi-Fi" },
+              { icon: Dumbbell,       label: "Gym" },
+              { icon: Refrigerator,   label: "Refrigerator" },
+              { icon: WashingMachine, label: "Washing Machine" },
+              { icon: Tv,             label: "TV" },
+              { icon: CookingPot,     label: "Kitchen" },
+              { icon: Droplets,       label: "Geyser" },
+              { icon: ChefHat,        label: "Self Cooking" },
+              { icon: Zap,            label: "Power Backup" },
+            ].map(({ icon: Icon, label }) => (
+              <div key={label} className="flex items-center gap-3">
+                <Icon className="w-5 h-5 text-black shrink-0" strokeWidth={1.75} />
+                <span className="text-[15px] text-gray-700">{label}</span>
               </div>
-              <div className="text-[13px] text-gray-500">{label}</div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </section>
 
@@ -689,11 +905,11 @@ export default function LandingPage() {
           <div className="text-center mb-14">
             <h2
               className="text-[38px] sm:text-[48px] font-normal text-black mb-3"
-              style={{ fontFamily: "Cinzel, serif" }}
+              style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
             >
-              Our Property
+              Our Properties
             </h2>
-            <p className="text-[16px] text-gray-500">In the heart of Shivaji Nagar</p>
+            <p className="text-[16px] text-gray-500">Shivaji Nagar &amp; St Johns Road</p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-8">
@@ -720,7 +936,7 @@ export default function LandingPage() {
                 <div className="p-6">
                   <h3
                     className="text-[22px] font-normal text-black mb-1"
-                    style={{ fontFamily: "Cinzel, serif" }}
+                    style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
                   >
                     {p.name}
                   </h3>
@@ -748,6 +964,7 @@ export default function LandingPage() {
                   <div className="flex gap-2">
                     <a
                       href="#availability"
+                      onClick={() => setActiveProperty(p.id)}
                       className="flex-1 text-center py-2.5 rounded-full text-[13px] font-semibold text-black"
                       style={{ backgroundColor: AMBER }}
                     >
@@ -776,7 +993,7 @@ export default function LandingPage() {
             <div>
               <h2
                 className="text-[38px] sm:text-[48px] font-normal text-black mb-2"
-                style={{ fontFamily: "Cinzel, serif" }}
+                style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
               >
                 Live Availability
               </h2>
@@ -794,7 +1011,7 @@ export default function LandingPage() {
                   {vacantNow > 0 ? (
                     <>
                       <span className="font-semibold text-green-700">{vacantNow} beds available right now</span>
-                      {" "}at Safina Plaza.
+                      {" "}at {activeProperty === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"}.
                     </>
                   ) : (
                     "No beds available right now — check back soon or WhatsApp us."
@@ -811,72 +1028,91 @@ export default function LandingPage() {
               >
                 General enquiry
               </button>
+              <div
+                className="inline-flex rounded-full p-1"
+                style={{ backgroundColor: "#f3f4f6" }}
+              >
+                {(["safina-plaza", "peepal-tree"] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setActiveProperty(p)}
+                    className="px-4 py-1.5 rounded-full text-[12px] font-medium transition-all"
+                    style={
+                      activeProperty === p
+                        ? { backgroundColor: AMBER, color: "#000" }
+                        : { color: "#6b7280" }
+                    }
+                  >
+                    {p === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Filter chips */}
-          <div className="flex flex-wrap gap-2 mb-7">
-            {[
-              { value: "all" as const,     label: "All" },
-              { value: "Vacant" as const,  label: "Available now" },
-              { value: "shared" as const,  label: "Shared beds" },
-              { value: "private" as const, label: "Private rooms" },
-            ].map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={() => setAvailabilityFilter(value)}
-                className="px-4 py-1.5 rounded-full text-[12px] font-medium border transition-all"
-                style={
-                  availabilityFilter === value
-                    ? { backgroundColor: AMBER, borderColor: AMBER, color: "#000" }
-                    : { borderColor: "#e5e7eb", color: "#6b7280" }
-                }
-              >
-                {label}
-              </button>
-            ))}
+          {/* Stay length — short stay vs monthly, before room type is chosen */}
+          <div className="mb-7">
+            <div className="inline-flex rounded-full p-1" style={{ backgroundColor: "#f3f4f6" }}>
+              {([
+                { value: "monthly" as const, label: "Monthly stay" },
+                { value: "week"    as const, label: "1-week short stay" },
+              ]).map(({ value, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setStayMode(value)}
+                  className="px-5 py-2 rounded-full text-[13px] font-medium transition-all"
+                  style={
+                    stayMode === value
+                      ? { backgroundColor: "#fff", color: "#111", boxShadow: "0 1px 4px rgba(0,0,0,0.10)" }
+                      : { color: "#6b7280" }
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {stayMode === "week" && (
+              <p className="text-[12px] text-gray-500 mt-2.5">
+                The 1-week exploratory stay is a flat ₹{EXPLORATORY_WEEK_RENT.toLocaleString("en-IN")} on
+                private rooms only — no security deposit.
+              </p>
+            )}
           </div>
 
           {loading ? (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="rounded-2xl border border-gray-100 bg-gray-50 h-36 animate-pulse" />
+            <div className="grid sm:grid-cols-2 gap-6">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="rounded-2xl border border-gray-100 bg-gray-50 h-96 animate-pulse" />
               ))}
             </div>
-          ) : sortedBeds.length === 0 ? (
+          ) : visibleRoomTypes.length === 0 ? (
             <div className="text-center py-16 text-gray-400 border border-dashed border-gray-200 rounded-2xl">
-              <p className="mb-2">No beds match this filter.</p>
-              <button
-                onClick={() => setAvailabilityFilter("all")}
+              <p className="mb-2">
+                {stayMode === "week"
+                  ? "No private rooms free for a 1-week stay right now."
+                  : "Nothing listed for this property yet."}
+              </p>
+              <a
+                href="https://wa.me/919113992047"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-[13px] font-medium underline"
                 style={{ color: AMBER }}
               >
-                Clear filter
-              </button>
+                WhatsApp us to check
+              </a>
             </div>
           ) : (
-            <>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {displayedBeds.map(b => (
-                  <BedCard
-                    key={b.id}
-                    bed={b}
-                    onEnquire={bed => openEnquiry(bed, bed.property)}
-                  />
-                ))}
-              </div>
-              {sortedBeds.length > 9 && (
-                <div className="mt-7 text-center">
-                  <button
-                    onClick={() => setShowAll(!showAll)}
-                    className="inline-flex items-center gap-1.5 text-[13px] font-medium text-gray-600 hover:text-black transition-colors"
-                  >
-                    {showAll ? "Show less" : `Show all ${sortedBeds.length} rooms`}
-                    {showAll ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  </button>
-                </div>
-              )}
-            </>
+            <div className="grid sm:grid-cols-2 gap-6">
+              {visibleRoomTypes.map(g => (
+                <RoomTypeCard
+                  key={g.key}
+                  group={g}
+                  stayMode={stayMode}
+                  onEnquire={() => openEnquiry(null, activeProperty)}
+                />
+              ))}
+            </div>
           )}
         </div>
       </section>
@@ -887,7 +1123,7 @@ export default function LandingPage() {
           <div className="text-center mb-14">
             <h2
               className="text-[38px] sm:text-[48px] font-normal text-white mb-3"
-              style={{ fontFamily: "Cinzel, serif" }}
+              style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
             >
               Why Choose The Hub
             </h2>
@@ -925,11 +1161,34 @@ export default function LandingPage() {
           <div className="text-center mb-12">
             <h2
               className="text-[38px] sm:text-[48px] font-normal text-black mb-3"
-              style={{ fontFamily: "Cinzel, serif" }}
+              style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
             >
               Transparent Pricing
             </h2>
             <p className="text-[16px] text-gray-500">No hidden charges. Everything included.</p>
+          </div>
+
+          {/* Property switcher */}
+          <div className="flex justify-center mb-8">
+            <div
+              className="inline-flex rounded-full p-1"
+              style={{ backgroundColor: "#e9e9e9" }}
+            >
+              {(["safina-plaza", "peepal-tree"] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPricingProperty(p)}
+                  className="px-6 py-2.5 rounded-full text-[13px] font-medium transition-all"
+                  style={
+                    pricingProperty === p
+                      ? { backgroundColor: "#fff", color: "#111", boxShadow: "0 1px 4px rgba(0,0,0,0.10)" }
+                      : { color: "#6b7280" }
+                  }
+                >
+                  {p === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Pricing table */}
@@ -995,7 +1254,7 @@ export default function LandingPage() {
           <div className="text-center mb-14">
             <h2
               className="text-[38px] sm:text-[48px] font-normal text-black mb-3"
-              style={{ fontFamily: "Cinzel, serif" }}
+              style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
             >
               Frequently Asked
             </h2>
@@ -1027,22 +1286,22 @@ export default function LandingPage() {
       </section>
 
       {/* ── CTA ── */}
-      <section className="py-24 px-4 sm:px-6" style={{ backgroundColor: AMBER }}>
+      <section className="py-24 px-4 sm:px-6" style={{ backgroundColor: DARK }}>
         <div className="max-w-3xl mx-auto text-center">
           <h2
-            className="text-[38px] sm:text-[52px] font-normal text-black mb-4 leading-tight"
-            style={{ fontFamily: "Cinzel, serif" }}
+            className="text-[38px] sm:text-[52px] font-normal text-white mb-4 leading-tight"
+            style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}
           >
-            Ready to find your community?
+            Ready to find your <span style={{ color: AMBER }}>community</span>?
           </h2>
-          <p className="text-[17px] mb-10" style={{ color: "rgba(0,0,0,0.65)" }}>
+          <p className="text-[17px] mb-10" style={{ color: "rgba(255,255,255,0.65)" }}>
             Join residents from across India living, working and thriving at The Hub.
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
             <a
               href={profileName ? "/book" : "/auth?next=/book"}
-              className="inline-flex items-center gap-2 px-8 py-3.5 rounded-full text-[15px] font-semibold text-white"
-              style={{ backgroundColor: DARK }}
+              className="inline-flex items-center gap-2 px-8 py-3.5 rounded-full text-[15px] font-semibold text-black"
+              style={{ backgroundColor: AMBER }}
             >
               Book a bed
             </a>
@@ -1068,18 +1327,13 @@ export default function LandingPage() {
             {/* Brand */}
             <div>
               <div className="flex items-center gap-2.5 mb-4">
-                <div
-                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: AMBER }}
-                >
-                  <span className="text-black font-bold text-[10px]">TH</span>
-                </div>
-                <span
-                  className="text-[18px] font-normal text-white"
-                  style={{ fontFamily: "Calistoga, serif" }}
-                >
-                  The Hub
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/assets/Hub_Logo__01.png"
+                  alt="The Hub Co-Living"
+                  className="h-7 w-auto"
+                  style={{ filter: "brightness(0) invert(1)" }}
+                />
               </div>
               <p className="text-[13px] leading-relaxed mb-5" style={{ color: "rgba(255,255,255,0.40)" }}>
                 Live more. Stress less.
@@ -1168,9 +1422,7 @@ export default function LandingPage() {
                 Rental Agreement
               </a>
               <a
-                href="https://www.notion.so/safinaventures/The-Hub-Co-Living-Community-Guidelines-Plaza-2fb69190ee9b807ca11be2bb5de73007"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/house-rules"
                 className="hover:text-white/60 transition-colors"
               >
                 House Rules

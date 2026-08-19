@@ -9,6 +9,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { signOut } from "@/lib/auth/actions"
+import { usePropertyScope, type PropertyScope } from "@/lib/property-context"
 
 const navItems = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -23,8 +24,15 @@ const navItems = [
   { href: "/admin/special-bookings", label: "Special Bookings", icon: Star },
 ]
 
+const SCOPES: { value: PropertyScope; label: string }[] = [
+  { value: "all",          label: "All"    },
+  { value: "safina-plaza", label: "Plaza"  },
+  { value: "peepal-tree",  label: "Peepal" },
+]
+
 export default function Sidebar({ email }: { email?: string | null }) {
   const pathname = usePathname()
+  const { scope, setScope } = usePropertyScope()
 
   return (
     <aside className="w-56 shrink-0 hidden lg:flex flex-col h-full border-r border-border bg-card">
@@ -41,12 +49,24 @@ export default function Sidebar({ email }: { email?: string | null }) {
         </div>
       </div>
 
-      {/* Property */}
+      {/* Property Scope Switcher */}
       <div className="px-3 pt-2.5 pb-2 border-b border-border">
         <p className="text-[10px] text-muted-foreground mb-1.5 px-0.5 font-medium uppercase tracking-wide">Viewing</p>
-        <div className="flex items-center gap-2 bg-muted rounded-md px-2.5 py-1.5">
-          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="text-[12px] font-medium text-foreground">Safina Plaza</span>
+        <div className="flex gap-1 bg-muted rounded-md p-0.5">
+          {SCOPES.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setScope(value)}
+              className={cn(
+                "flex-1 text-[11px] py-1 rounded-[5px] font-medium transition-all duration-150 cursor-pointer",
+                scope === value
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 

@@ -10,13 +10,19 @@ export async function GET() {
   try {
     await requireAdminApi()
 
-    const [plazaInvoices, plazaDeposits] = await Promise.all([
+    const [
+      plazaInvoices, peepalInvoices,
+      plazaDeposits, peepalDeposits,
+    ] = await Promise.all([
       zohoEnabled("safina-plaza") ? listInvoicesByHsn("safina-plaza", RENT_HSN) : Promise.resolve([]),
+      zohoEnabled("peepal-tree")  ? listInvoicesByHsn("peepal-tree",  RENT_HSN) : Promise.resolve([]),
       zohoEnabled("safina-plaza") ? listRetainerInvoices("safina-plaza")         : Promise.resolve([]),
+      zohoEnabled("peepal-tree")  ? listRetainerInvoices("peepal-tree")          : Promise.resolve([]),
     ])
 
     return NextResponse.json({
-      plaza: { invoices: plazaInvoices, deposits: plazaDeposits },
+      plaza:  { invoices: plazaInvoices,  deposits: plazaDeposits },
+      peepal: { invoices: peepalInvoices, deposits: peepalDeposits },
     })
   } catch (err) {
     const authRes = authErrorResponse(err)

@@ -1,4 +1,4 @@
-export type Property = 'safina-plaza'
+export type Property = 'safina-plaza' | 'peepal-tree'
 export type Floor = '1st' | '2nd' | '3rd' | 'all'
 export type RoomType = 'private' | 'sharing'
 // Canonical room tier — mirrors the Notion "Active Members" Room Type tag.

@@ -8,6 +8,7 @@ const notion = new Client({ auth: process.env.NOTION_TOKEN })
 
 // Data source IDs (collection IDs — used with dataSources.query)
 const DS_PLAZA  = process.env.NOTION_DS_PLAZA!   // ea069190-ee9b-83d3-89f2-078173496d03
+const DS_PEEPAL = process.env.NOTION_DS_PEEPAL!  // b8769190-ee9b-8395-94c4-87624c3211f0
 
 // ─── Property extractors ───────────────────────────────────────────────────
 
@@ -179,6 +180,57 @@ function plazaBed(page: PageObjectResponse, bed: BedLabel): Bed {
   }
 }
 
+// ─── Peepal bed transformer ────────────────────────────────────────────────
+// Peepal has an explicit Status field: Occupied / Vacant / Blocked / Checked-Out
+
+function peepalBed(page: PageObjectResponse, bed: BedLabel): Bed {
+  const name         = getTitle(page, "Member Name")
+  const gender       = getSelect(page, "Gender")
+  const notionStatus = getSelect(page, "Status")
+  const tariff       = getNumber(page, "Tariff with GST")
+  const checkIn      = getDate(page, "Check In Date")
+  const checkOut     = getDate(page, "Check Out Date ")
+
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const checkInDate = checkIn ? new Date(checkIn + "T00:00:00") : null
+
+  let status: BedStatus
+  if (notionStatus === "Incoming") {
+    status = "incoming"
+  } else if (notionStatus === "Occupied") {
+    // If check-in date is in the future, treat as incoming booking
+    if (checkInDate && checkInDate > today) {
+      status = "incoming"
+    } else {
+      // Zero-tariff guests are special bookings (owner's guests / co-builders)
+      status = tariff === 0 ? "special" : "occupied"
+    }
+  } else if (notionStatus === "Blocked") {
+    status = "blocked"
+  } else {
+    // Vacant or Checked-Out → vacant
+    status = "vacant"
+  }
+
+  const isVacant = name === "Vacant" || !name
+
+  return {
+    id: `peepal-${page.id}`,
+    bedNumber: bed === "B" ? 2 : 1,
+    status,
+    depositPaid: undefined,
+    guestId:   (status === "occupied" || status === "special") ? page.id : undefined,
+    guestName: (!isVacant && status !== "blocked") ? name : undefined,
+    checkIn:   checkIn  ?? undefined,
+    checkOut:  checkOut ?? undefined,
+    genderRestriction: (gender?.toLowerCase() as Gender) ?? "male",
+    tier: checkOut ? "monthly" : "open-ended",
+    subscriptionId: getRichText(page, "Razorpay Subscription ID") ?? undefined,
+    roomTier: normalizeRoomTier(getRoomTypeName(page)) ?? undefined,
+    tags: [...genderTag(gender, !isVacant && status !== "blocked"), ...getMultiSelect(page, "Tags"), ...getMultiSelect(page, "Type")],
+  }
+}
+
 // ─── Group pages into Room objects ─────────────────────────────────────────
 
 type BedFn = (page: PageObjectResponse, bed: BedLabel) => Bed
@@ -284,8 +336,17 @@ function groupRooms(
 // ─── Public API ────────────────────────────────────────────────────────────
 
 export async function getRooms(): Promise<Room[]> {
-  const plazaPages = await queryAll(DS_PLAZA)
-  return groupRooms(plazaPages, "safina-plaza", "feazzo", plazaBed, null, "Deposit Amount (₹)")
+  const [plazaPages, peepalPages] = await Promise.all([
+    queryAll(DS_PLAZA),
+    // NOTION_DS_PEEPAL isn't configured yet — skip rather than throw, so Plaza
+    // data still loads. Set the env var to bring Peepal Tree onto the board.
+    DS_PEEPAL ? queryAll(DS_PEEPAL) : Promise.resolve([]),
+  ])
+
+  const plaza  = groupRooms(plazaPages,  "safina-plaza", "feazzo",          plazaBed,  null,              "Deposit Amount (₹)")
+  const peepal = groupRooms(peepalPages, "peepal-tree",  "safina-ventures", peepalBed, "Tariff with GST", null)
+
+  return [...plaza, ...peepal]
 }
 
 // ─── Guest contact (email + phone for Razorpay) ───────────────────────────

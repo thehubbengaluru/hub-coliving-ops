@@ -18,7 +18,7 @@ type GuestRow = {
   notionPageId: string
   guestName: string
   room: string
-  property: "safina-plaza"
+  property: "safina-plaza" | "peepal-tree"
   entity: "feazzo" | "safina-ventures"
   monthlyRate: number
   depositPaid: boolean | undefined

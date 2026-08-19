@@ -26,6 +26,20 @@ function phoneOf(page: PageObjectResponse): string {
   const p = page.properties["Phone"]
   return p?.type === "phone_number" ? (p.phone_number ?? "") : ""
 }
+function roomOf(page: PageObjectResponse): string {
+  const p = page.properties["Room"]
+  return p?.type === "select" ? (p.select?.name ?? "") : ""
+}
+
+// Infer property from room number (Peepal 100–199, Plaza 200+). The payment
+// link MUST be created on the owning entity's Razorpay account, or the money
+// lands in the wrong company's books. Defaults to Plaza when unparseable.
+function inferProperty(room: string): Property {
+  const match = room.match(/\d+/)
+  const n = match ? parseInt(match[0], 10) : NaN
+  if (!isNaN(n) && n >= 100 && n < 200) return "peepal-tree"
+  return "safina-plaza"
+}
 
 // Manual rent payment from the guest portal. The amount is ALWAYS derived
 // server-side from the authenticated guest's own record — never taken from the
@@ -43,7 +57,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "We couldn't find your active stay. Please contact the office." }, { status: 404 })
     }
 
-    const property: Property = "safina-plaza"
+    const property: Property = inferProperty(roomOf(member))
     const guestName = text(member, "Member Name") || "Guest"
     const phone = phoneOf(member)
     if (!phone.trim()) {

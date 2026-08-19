@@ -11,15 +11,24 @@ type ZohoAccount = {
   apiBase:      string
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function getAccount(_property: Property): ZohoAccount {
+function getAccount(property: Property): ZohoAccount {
+  if (property === "safina-plaza") {
+    return {
+      clientId:     process.env.ZOHO_CLIENT_ID_PLAZA!,
+      clientSecret: process.env.ZOHO_CLIENT_SECRET_PLAZA!,
+      refreshToken: process.env.ZOHO_REFRESH_TOKEN_PLAZA!,
+      orgId:        process.env.ZOHO_ORG_ID_PLAZA!,
+      tokenUrl:     process.env.ZOHO_TOKEN_URL_PLAZA  ?? "https://accounts.zoho.in/oauth/v2/token",
+      apiBase:      process.env.ZOHO_API_BASE_PLAZA   ?? "https://www.zohoapis.in/books/v3",
+    }
+  }
   return {
-    clientId:     process.env.ZOHO_CLIENT_ID_PLAZA!,
-    clientSecret: process.env.ZOHO_CLIENT_SECRET_PLAZA!,
-    refreshToken: process.env.ZOHO_REFRESH_TOKEN_PLAZA!,
-    orgId:        process.env.ZOHO_ORG_ID_PLAZA!,
-    tokenUrl:     process.env.ZOHO_TOKEN_URL_PLAZA  ?? "https://accounts.zoho.in/oauth/v2/token",
-    apiBase:      process.env.ZOHO_API_BASE_PLAZA   ?? "https://www.zohoapis.in/books/v3",
+    clientId:     process.env.ZOHO_CLIENT_ID_PEEPAL!,
+    clientSecret: process.env.ZOHO_CLIENT_SECRET_PEEPAL!,
+    refreshToken: process.env.ZOHO_REFRESH_TOKEN_PEEPAL!,
+    orgId:        process.env.ZOHO_ORG_ID_PEEPAL!,
+    tokenUrl:     process.env.ZOHO_TOKEN_URL_PEEPAL  ?? "https://accounts.zoho.in/oauth/v2/token",
+    apiBase:      process.env.ZOHO_API_BASE_PEEPAL   ?? "https://www.zohoapis.in/books/v3",
   }
 }
 
@@ -27,6 +36,7 @@ function getAccount(_property: Property): ZohoAccount {
 
 const tokenCache: Record<Property, { token: string; expiresAt: number }> = {
   "safina-plaza": { token: "", expiresAt: 0 },
+  "peepal-tree":  { token: "", expiresAt: 0 },
 }
 
 async function getAccessToken(property: Property): Promise<string> {
@@ -131,7 +141,7 @@ export async function createRentInvoice({
   description?: string
 }): Promise<ZohoInvoice> {
   const contactId     = await findOrCreateContact(property, guestName, email, phone)
-  const propertyLabel = "Safina Plaza"
+  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
 
   const data = await zohoFetch("POST", "/invoices", property, {
     customer_id:  contactId,
@@ -208,7 +218,7 @@ export async function createDepositReceipt({
   date:      string
 }): Promise<ZohoDepositReceipt> {
   const contactId     = await findOrCreateContact(property, guestName, email, phone)
-  const propertyLabel = "Safina Plaza"
+  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
 
   const data = await zohoFetch("POST", "/retainerinvoices", property, {
     customer_id: contactId,
