@@ -87,8 +87,23 @@ async function zohoFetch(method: string, path: string, property: Property, body?
   return data
 }
 
-// Returns true if Zoho is configured for a given property
+// ─── Master switch ────────────────────────────────────────────────────────
+// Zoho invoicing is switched OFF for ALL properties, by request (Aug 2026).
+// While off, nothing is created or sent: no rent invoice, no deposit receipt,
+// no emailed PDF, no payment marked, no credit note. Every call site already
+// checks zohoEnabled(), so gating here covers all of them.
+//
+// Deliberately default-off rather than env-gated, so the switch can't be left
+// on by a missed deployment setting. To resume, set ZOHO_BILLING_ENABLED=1
+// (no code change needed) — credentials are untouched, so it resumes cleanly.
+//
+// Nothing is lost while off: Zoho Books remains the system of record for
+// invoices already issued, and stays readable by logging into Zoho directly.
+const BILLING_ENABLED = process.env.ZOHO_BILLING_ENABLED === "1"
+
+// Returns true if Zoho invoicing is switched on AND configured for a property.
 export function zohoEnabled(property: Property): boolean {
+  if (!BILLING_ENABLED) return false
   const acct = getAccount(property)
   return !!(acct.clientId && acct.clientSecret && acct.refreshToken && acct.orgId)
 }
