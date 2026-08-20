@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { createServerClient } from "@supabase/ssr"
+import { ADMIN_GATE_ENABLED } from "@/lib/auth/gate"
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
@@ -51,6 +52,7 @@ export async function updateSession(request: NextRequest) {
   // page/route layer (requireAdmin / requireAdminApi) — this edge gate only
   // ensures a logged-in user, matching the portal pattern below.
   if (
+    ADMIN_GATE_ENABLED &&
     pathname.startsWith(ADMIN_PREFIX) &&
     pathname !== ADMIN_LOGIN &&
     !user
