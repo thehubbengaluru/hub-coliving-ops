@@ -3,6 +3,7 @@ import { Client, isFullPage } from "@notionhq/client"
 import type { PageObjectResponse } from "@notionhq/client/build/src/api-endpoints"
 import {
   createDepositLink,
+  razorpayEnabled,
   createProRatedLink,
   createRentSubscription,
 } from "@/lib/razorpay"
@@ -26,7 +27,7 @@ const DB_ID = "2d969190-ee9b-8025-a11b-dc5da277447f"
 // accept any canonical tariff of the matching room size (the exact rate then
 // identifies the tier). An exact tier label ("Deluxe Private") validates
 // strictly. Returns null when the posted rate is not a valid tariff.
-function canonicalRate(property: "safina-plaza", roomType: string, posted: number): number | null {
+function canonicalRate(property: "safina-plaza" | "peepal-tree", roomType: string, posted: number): number | null {
   const raw = roomType.trim().toLowerCase()
   if (/standard|deluxe/.test(raw)) {
     const fromTier = rateForTier(property, normalizeRoomTier(roomType))
@@ -130,7 +131,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const property = formData.get("property") as "safina-plaza"
+    const property = formData.get("property") as "safina-plaza" | "peepal-tree"
     const fullName = formData.get("fullName") as string
     const email = (formData.get("email") as string)?.trim().toLowerCase()
     const contactNumber = ((formData.get("contactNumber") as string) ?? "").replace(/\D/g, "")
@@ -141,6 +142,17 @@ export async function POST(req: Request) {
 
     if (!property || !fullName || !email || !contactNumber || !postedRate || !checkIn) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    }
+
+    // Refuse early if this property has no Razorpay account configured — before
+    // any booking record is written. Otherwise the guest completes the form and
+    // the flow dies at link creation, leaving an orphan booking behind.
+    if (!razorpayEnabled(property)) {
+      console.error(`[create-payment-links] Razorpay not configured for ${property} — set RZP_KEY_ID/SECRET for it`)
+      return NextResponse.json(
+        { error: "Online booking isn't available for this property yet. Please WhatsApp us on +91 91139 92047 and we'll set it up for you." },
+        { status: 503 },
+      )
     }
 
     // ── Money integrity: derive the rate server-side; never trust the client ──

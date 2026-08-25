@@ -2,6 +2,7 @@ import "server-only"
 import { cache } from "react"
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { ADMIN_GATE_ENABLED } from "./gate"
 
 export type SessionUser = {
   id: string
@@ -44,8 +45,14 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 })
 
 // Guard for the admin area: requires an authenticated admin, else redirects.
+// While ADMIN_GATE_ENABLED is off the redirects are skipped entirely — a real
+// session is still used when present (so the header shows the right email),
+// otherwise an anonymous stand-in is returned so the layout can render.
 export const requireAdmin = cache(async (): Promise<SessionUser> => {
   const user = await getSessionUser()
+  if (!ADMIN_GATE_ENABLED) {
+    return user ?? { id: "gate-disabled", email: null, role: "admin" }
+  }
   if (!user) redirect("/admin/login")
   if (user.role !== "admin") redirect("/admin/login?error=forbidden")
   return user

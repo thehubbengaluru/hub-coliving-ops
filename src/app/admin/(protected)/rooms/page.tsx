@@ -383,7 +383,7 @@ function BedModal({
     if (!blkBy.trim()) { setError("Please record who is blocking this bed"); return }
     setLoading(true)
     setError("")
-    const notionPageId = bed.guestId ?? bed.id.replace(/^plaza-/, "")
+    const notionPageId = bed.guestId ?? bed.id.replace(/^(plaza|peepal)-/, "")
     try {
       const res = await fetch("/api/rooms/block", {
         method: "POST",
@@ -410,7 +410,7 @@ function BedModal({
     if (!room || !bed) return
     setLoading(true)
     setError("")
-    const notionPageId = bed.guestId ?? bed.id.replace(/^plaza-/, "")
+    const notionPageId = bed.guestId ?? bed.id.replace(/^(plaza|peepal)-/, "")
     try {
       const res = await fetch("/api/rooms/block", {
         method: "DELETE",
@@ -436,7 +436,7 @@ function BedModal({
 
     setLoading(true)
     setError("")
-    const notionPageId = bed.guestId ?? bed.id.replace(/^plaza-/, "")
+    const notionPageId = bed.guestId ?? bed.id.replace(/^(plaza|peepal)-/, "")
 
     try {
       const res = await fetch("/api/rooms/invite", {
@@ -474,7 +474,7 @@ function BedModal({
     setLoading(true)
     setError("")
 
-    const notionPageId = bed.guestId ?? bed.id.replace(/^plaza-/, "")
+    const notionPageId = bed.guestId ?? bed.id.replace(/^(plaza|peepal)-/, "")
 
     try {
       const res = await fetch("/api/rooms/checkin", {
@@ -519,7 +519,7 @@ function BedModal({
     setLoading(true)
     setError("")
 
-    const notionPageId = bed.guestId ?? bed.id.replace(/^plaza-/, "")
+    const notionPageId = bed.guestId ?? bed.id.replace(/^(plaza|peepal)-/, "")
 
     try {
       const res = await fetch("/api/rooms/checkout", {
@@ -559,7 +559,7 @@ function BedModal({
       setError("Select a bed in the new room"); return
     }
     setLoading(true); setError("")
-    const oldBedPageId = bed.guestId ?? bed.id.replace(/^plaza-/, "")
+    const oldBedPageId = bed.guestId ?? bed.id.replace(/^(plaza|peepal)-/, "")
     const bedLabel     = raSelectedRoom.type === "sharing" ? ` · Bed ${raSelectedBed}` : ""
     const newRoomLabel = `Room ${raSelectedRoom.number}${bedLabel}`
     try {
@@ -629,7 +629,7 @@ function BedModal({
             Room {room.number}{room.type === "sharing" ? ` — Bed ${bed.bedNumber}` : ""}
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
-            Safina Plaza · {room.floor} Floor · {room.type}
+            {room.property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"} · {room.floor} Floor · {room.type}
           </DialogDescription>
         </DialogHeader>
 
@@ -911,7 +911,7 @@ function BedModal({
                       Room {raSelectedRoom.number}{raSelectedBed ? ` · Bed ${raSelectedBed}` : ""}
                     </p>
                     <p className="text-sm text-muted-foreground mt-1 truncate">
-                      Safina Plaza · {raSelectedRoom.floor} Floor
+                      {raSelectedRoom.property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"} · {raSelectedRoom.floor} Floor
                     </p>
                     {raSelectedRoom.roomTier && (
                       <p className="text-[11px] font-medium text-emerald-600 mt-2.5 truncate">{raSelectedRoom.roomTier}</p>
@@ -965,7 +965,7 @@ function BedModal({
                             <span className="text-sm font-semibold text-foreground">Room {r.number}</span>
                             {crossProp && (
                               <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md">
-                                Safina
+                                {r.property === "safina-plaza" ? "Safina" : "Peepal"}
                               </span>
                             )}
                           </div>
@@ -1232,6 +1232,7 @@ function BedModal({
 // ─── Page ─────────────────────────────────────────────────────────────────
 
 const PLAZA_FLOORS: Floor[] = ["2nd", "3rd"]
+const PEEPAL_FLOORS: Floor[] = ["1st", "2nd", "3rd"]
 
 export default function RoomsPage() {
   const [rooms, setRooms] = useState<Room[]>([])
@@ -1355,6 +1356,29 @@ export default function RoomsPage() {
           </div>
           {PLAZA_FLOORS.map(floor => {
             const floorRooms = filtered.filter(r => r.property === "safina-plaza" && r.floor === floor)
+            if (!floorRooms.length) return null
+            return (
+              <div key={floor}>
+                <p className="text-[11px] text-muted-foreground mb-2 font-medium uppercase tracking-wide">{floor} Floor</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+                  {floorRooms.map(room => (
+                    <RoomCard key={room.id} room={room} onBedClick={(r, b) => { setSelectedRoom(r); setSelectedBed(b) }} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {filtered.some(r => r.property === "peepal-tree") && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-foreground">Peepal Tree</h2>
+            <span className="text-xs text-muted-foreground">· Safina Ventures</span>
+          </div>
+          {PEEPAL_FLOORS.map(floor => {
+            const floorRooms = filtered.filter(r => r.property === "peepal-tree" && r.floor === floor)
             if (!floorRooms.length) return null
             return (
               <div key={floor}>

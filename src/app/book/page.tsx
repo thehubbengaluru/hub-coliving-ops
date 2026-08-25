@@ -413,8 +413,9 @@ function FileInput({
   )
 }
 
-const PROPERTY_MAP: Record<string, "safina-plaza"> = {
+const PROPERTY_MAP: Record<string, "safina-plaza" | "peepal-tree"> = {
   "The Hub Bengaluru – Safina Plaza": "safina-plaza",
+  "Peepal Tree @ The Hub": "peepal-tree",
 }
 
 function RoomSelector({
@@ -828,7 +829,7 @@ export default function BookPage() {
     setPaymentLoading(true)
     setPaymentError(null)
 
-    const propKey = "safina-plaza"
+    const propKey = data.property === "The Hub Bengaluru – Safina Plaza" ? "safina-plaza" : "peepal-tree"
 
     const fd = new FormData()
     fd.append("property", propKey)
@@ -1186,6 +1187,7 @@ export default function BookPage() {
                 <ButtonGroup
                   options={[
                     "The Hub Bengaluru – Safina Plaza",
+                    "Peepal Tree @ The Hub",
                   ]}
                   value={data.property}
                   onChange={(v) => set("property", v)}

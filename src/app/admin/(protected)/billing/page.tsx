@@ -9,15 +9,17 @@ import {
   Clock, ExternalLink, Send, IndianRupee,
 } from "lucide-react"
 import type { ZohoInvoiceListItem, ZohoRetainerListItem } from "@/lib/zoho"
+import { usePropertyScope } from "@/lib/property-context"
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
 type BillingData = {
   plaza:  { invoices: ZohoInvoiceListItem[];  deposits: ZohoRetainerListItem[] }
+  peepal: { invoices: ZohoInvoiceListItem[];  deposits: ZohoRetainerListItem[] }
 }
 
 type Entity = {
-  key:      "plaza"
+  key:      "plaza" | "peepal"
   name:     string
   property: string
   invoices: ZohoInvoiceListItem[]
@@ -96,8 +98,8 @@ function InvoiceRow({ inv, onResend, onTag }: { inv: ZohoInvoiceListItem; onRese
 
 // ─── Entity card ─────────────────────────────────────────────────────────
 
-function EntityCard({ entity, onResend, onTag }: { entity: Entity; onResend: (property: "safina-plaza", invoiceId: string) => void; onTag: (property: "safina-plaza", invoiceId: string) => void }) {
-  const property = "safina-plaza"
+function EntityCard({ entity, onResend, onTag }: { entity: Entity; onResend: (property: "safina-plaza" | "peepal-tree", invoiceId: string) => void; onTag: (property: "safina-plaza" | "peepal-tree", invoiceId: string) => void }) {
+  const property = entity.key === "plaza" ? "safina-plaza" : "peepal-tree"
   const paid     = entity.invoices.filter(i => i.status === "paid" || i.balance === 0)
   const overdue  = entity.invoices.filter(i => i.status === "overdue")
   const unpaid   = entity.invoices.filter(i => i.status !== "paid" && i.balance > 0)
@@ -175,6 +177,7 @@ function EntityCard({ entity, onResend, onTag }: { entity: Entity; onResend: (pr
 // ─── Page ─────────────────────────────────────────────────────────────────
 
 export default function BillingPage() {
+  const { scope } = usePropertyScope()
   const [data, setData]       = useState<BillingData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
@@ -195,7 +198,7 @@ export default function BillingPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  async function handleResend(property: "safina-plaza", invoiceId: string) {
+  async function handleResend(property: "safina-plaza" | "peepal-tree", invoiceId: string) {
     setSending(invoiceId)
     try {
       await fetch("/api/razorpay/payment-link", {
@@ -215,7 +218,7 @@ export default function BillingPage() {
     }
   }
 
-  async function handleTag(property: "safina-plaza", invoiceId: string) {
+  async function handleTag(property: "safina-plaza" | "peepal-tree", invoiceId: string) {
     const guestName = window.prompt("Tag this invoice to which guest? (name)")
     if (!guestName?.trim()) return
     const guestEmail = window.prompt("Guest email (optional)") ?? ""
@@ -234,9 +237,12 @@ export default function BillingPage() {
 
   const entities: Entity[] = data ? [
     { key: "plaza",  name: "Feazzo Holdings",         property: "Safina Plaza",  invoices: data.plaza.invoices,  deposits: data.plaza.deposits },
+    { key: "peepal", name: "Safina Ventures Pvt Ltd", property: "Peepal Tree",   invoices: data.peepal.invoices, deposits: data.peepal.deposits },
   ] : []
 
-  const visibleEntities = entities
+  const visibleEntities = scope === "all" ? entities
+    : scope === "safina-plaza" ? entities.filter(e => e.key === "plaza")
+    : entities.filter(e => e.key === "peepal")
 
   const allInvoices  = entities.flatMap(e => e.invoices)
   const totalCollected   = allInvoices.filter(i => i.status === "paid" || i.balance === 0).reduce((s, i) => s + i.total, 0)

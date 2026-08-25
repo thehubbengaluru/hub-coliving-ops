@@ -6,7 +6,8 @@ import { rateLimit, clientKey } from "@/lib/rate-limit"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-function inferCategory(roomNumber: string): BedCategory {
+function inferCategory(roomNumber: string, property: "safina-plaza" | "peepal-tree"): BedCategory {
+  if (property === "peepal-tree") return "Standard"
   const n = parseInt(roomNumber, 10)
   return n >= 200 && n < 300 ? "Premium" : "Standard"
 }
@@ -47,12 +48,18 @@ async function nextBookingStarts(): Promise<Map<string, string>> {
 // displayed weekly from the monthly so it matches what's actually charged.
 const weeklyFor = (monthly: number) => Math.round((monthly / 30) * 7)
 
-const MONTHLY_RATES: Record<"safina-plaza", Record<`${BedCategory}-${BedSize}`, number>> = {
+const MONTHLY_RATES: Record<"safina-plaza" | "peepal-tree", Record<`${BedCategory}-${BedSize}`, number>> = {
   "safina-plaza": {
     "Premium-Double":  25000,
     "Premium-Single":  50000,
     "Standard-Double": 21500,
     "Standard-Single": 43500,
+  },
+  "peepal-tree": {
+    "Standard-Double": 18550,
+    "Standard-Single": 39100,
+    "Premium-Double":  18550,
+    "Premium-Single":  39100,
   },
 }
 
@@ -66,7 +73,7 @@ export async function GET(req: Request) {
     const beds: BedListing[] = []
 
     for (const room of rooms) {
-      const category = inferCategory(room.number)
+      const category = inferCategory(room.number, room.property)
       const size: BedSize = room.type === "private" ? "Single" : "Double"
 
       for (const bed of room.beds) {
@@ -89,24 +96,50 @@ export async function GET(req: Request) {
           }
         }
 
-        // On Plaza, "blocked" means the room is being serviced — no block-start
-        // date semantics apply, so it is always truly blocked.
+        // Blocked beds whose block starts in the future are temporarily available.
+        // Only applies to Peepal Tree where "blocked" is a staff-set status with a
+        // future block date. On Plaza, "blocked" means the room is being serviced —
+        // no block-start date semantics apply, so it is always truly blocked.
         if (bed.status === "blocked") {
-          beds.push({
-            id: bedLabel ? `${room.number}-${bedLabel}` : room.number,
-            property: room.property,
-            roomNumber: room.number,
-            bedLabel,
-            category,
-            size,
-            status: "Blocked",
-            availableFrom: null,
-            availableUntil: null,
-            isTemporarilyAvailable: false,
-            blockStartDate: null,
-            monthlyRate,
-            weeklyRate: weeklyFor(monthlyRate),
-          })
+          const today = new Date(); today.setHours(0, 0, 0, 0)
+          const blockDate = room.property === "peepal-tree" && bed.checkIn
+            ? new Date(bed.checkIn + "T00:00:00")
+            : null
+          const isTemporarilyAvailable = blockDate !== null && blockDate > today
+          if (isTemporarilyAvailable && blockDate) {
+            const availableUntil = new Date(blockDate.getTime() - 86400000).toISOString().slice(0, 10)
+            beds.push({
+              id: bedLabel ? `${room.number}-${bedLabel}` : room.number,
+              property: room.property,
+              roomNumber: room.number,
+              bedLabel,
+              category,
+              size,
+              status: "Vacant",
+              availableFrom: null,
+              availableUntil,
+              isTemporarilyAvailable: true,
+              blockStartDate: bed.checkIn ?? null,
+              monthlyRate,
+              weeklyRate: weeklyFor(monthlyRate),
+            })
+          } else {
+            beds.push({
+              id: bedLabel ? `${room.number}-${bedLabel}` : room.number,
+              property: room.property,
+              roomNumber: room.number,
+              bedLabel,
+              category,
+              size,
+              status: "Blocked",
+              availableFrom: null,
+              availableUntil: null,
+              isTemporarilyAvailable: false,
+              blockStartDate: null,
+              monthlyRate,
+              weeklyRate: weeklyFor(monthlyRate),
+            })
+          }
           continue
         }
 

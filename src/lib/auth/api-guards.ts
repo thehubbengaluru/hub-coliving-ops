@@ -2,6 +2,7 @@ import "server-only"
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getSessionUser } from "@/lib/auth/dal"
+import { ADMIN_GATE_ENABLED } from "./gate"
 
 // Guards for Route Handlers (API routes). Unlike the DAL's `requireAdmin`,
 // these NEVER redirect — they throw `AuthError`, which handlers turn into a
@@ -20,6 +21,13 @@ export class AuthError extends Error {
 // admin's identity. Throws AuthError(401) if unauthenticated, (403) if not admin.
 export async function requireAdminApi(): Promise<{ id: string; email: string | null }> {
   const user = await getSessionUser()
+  // Gate off: admin APIs answer without a session. Without this the pages
+  // would render but every data call would 401, so the removal must cover
+  // this layer too. Real identity is preserved when a session exists, so
+  // audit fields (e.g. refund createdBy) stay accurate for logged-in staff.
+  if (!ADMIN_GATE_ENABLED) {
+    return user ? { id: user.id, email: user.email } : { id: "gate-disabled", email: null }
+  }
   if (!user) throw new AuthError(401, "Authentication required")
   if (user.role !== "admin") throw new AuthError(403, "Admin access required")
   return { id: user.id, email: user.email }

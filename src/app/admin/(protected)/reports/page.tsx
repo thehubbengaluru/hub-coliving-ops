@@ -40,6 +40,7 @@ function fmtMonth(ym: string) {
 
 type BillingData = {
   plaza:  { invoices: ZohoInvoiceListItem[]; deposits: unknown[] }
+  peepal: { invoices: ZohoInvoiceListItem[]; deposits: unknown[] }
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────
@@ -79,7 +80,9 @@ export default function ReportsPage() {
   const occupancyPct = totalBeds ? Math.round((occupiedBeds.length / totalBeds) * 100) : 0
 
   const plazaRooms  = rooms.filter(r => r.property === "safina-plaza")
+  const peepalRooms = rooms.filter(r => r.property === "peepal-tree")
   const plazaBeds   = plazaRooms.flatMap(r => r.beds)
+  const peepalBeds  = peepalRooms.flatMap(r => r.beds)
 
   const monthlyRunRate = scopedRooms.reduce((s, r) => {
     const occupiedCount = r.beds.filter(b => b.status === "occupied").length
@@ -96,6 +99,7 @@ export default function ReportsPage() {
 
   const occupancyCompare = [
     { property: "Safina Plaza", occ: plazaBeds.filter(b => b.status === "occupied").length, total: plazaBeds.length },
+    { property: "Peepal Tree",  occ: peepalBeds.filter(b => b.status === "occupied").length, total: peepalBeds.length },
   ]
 
   // ── Leads ────────────────────────────────────────────────────────────
@@ -117,14 +121,23 @@ export default function ReportsPage() {
   // ── Billing ──────────────────────────────────────────────────────────
   const plazaInvoices  = billing?.plaza.invoices  ?? []
 
-  const scopedInvoices = plazaInvoices
+  const peepalInvoices = billing?.peepal.invoices ?? []
+
+  const scopedInvoices = scope === "all"
+    ? [...plazaInvoices, ...peepalInvoices]
+    : scope === "safina-plaza" ? plazaInvoices : peepalInvoices
 
   // Monthly revenue grouped by month
-  const monthlyMap: Record<string, { month: string; safina: number }> = {}
+  const monthlyMap: Record<string, { month: string; safina: number; peepal: number }> = {}
   for (const inv of plazaInvoices) {
     const ym = inv.date.slice(0, 7)
-    if (!monthlyMap[ym]) monthlyMap[ym] = { month: ym, safina: 0 }
+    if (!monthlyMap[ym]) monthlyMap[ym] = { month: ym, safina: 0, peepal: 0 }
     monthlyMap[ym].safina += inv.total
+  }
+  for (const inv of peepalInvoices) {
+    const ym = inv.date.slice(0, 7)
+    if (!monthlyMap[ym]) monthlyMap[ym] = { month: ym, safina: 0, peepal: 0 }
+    monthlyMap[ym].peepal += inv.total
   }
   const monthlyRevData = Object.values(monthlyMap)
     .sort((a, b) => a.month.localeCompare(b.month))
@@ -132,7 +145,7 @@ export default function ReportsPage() {
 
   // YTD = current year paid invoices
   const thisYear  = new Date().getFullYear().toString()
-  const ytdRevenue = plazaInvoices
+  const ytdRevenue = [...plazaInvoices, ...peepalInvoices]
     .filter(i => i.date.startsWith(thisYear) && (i.status === "paid" || i.balance === 0))
     .reduce((s, i) => s + i.total, 0)
 
@@ -198,7 +211,7 @@ export default function ReportsPage() {
         {/* Monthly revenue chart */}
         <Card className="lg:col-span-3 bg-card border-border shadow-none">
           <CardHeader className="pb-1 pt-5 px-5">
-            <CardTitle className="text-sm font-semibold">Monthly Revenue</CardTitle>
+            <CardTitle className="text-sm font-semibold">Monthly Revenue by Property</CardTitle>
           </CardHeader>
           <CardContent className="px-2 pb-5">
             {monthlyRevData.length === 0 ? (
@@ -212,6 +225,7 @@ export default function ReportsPage() {
                   <Tooltip {...tip} formatter={v => [`₹${Number(v).toLocaleString("en-IN")}`, ""]} />
                   <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px", color: "#64748b" }} />
                   <Bar dataKey="safina" name="Safina Plaza" fill={C.bar1} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="peepal" name="Peepal Tree"  fill={C.bar2} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}

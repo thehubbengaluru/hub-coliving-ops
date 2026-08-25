@@ -110,10 +110,15 @@ export async function POST(req: Request) {
   const rawBody   = await req.text()
   const signature = req.headers.get("x-razorpay-signature") ?? ""
 
+  // Each property has its own Razorpay account, so a delivery may be signed
+  // with either account's secret — try both. Accepting only Plaza's would 401
+  // every Peepal webhook, i.e. the guest pays but nothing is ever recorded.
   const secretPlaza  = process.env.RZP_WEBHOOK_SECRET_PLAZA  ?? ""
+  const secretPeepal = process.env.RZP_WEBHOOK_SECRET_PEEPAL ?? ""
 
   const valid =
-    (secretPlaza  && verifyWebhookSignature(rawBody, signature, secretPlaza))
+    (secretPlaza  && verifyWebhookSignature(rawBody, signature, secretPlaza)) ||
+    (secretPeepal && verifyWebhookSignature(rawBody, signature, secretPeepal))
 
   if (!valid) {
     console.warn("[webhook] Invalid signature")

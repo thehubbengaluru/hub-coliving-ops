@@ -33,7 +33,9 @@ type LiveStats = {
   coLivingOccupied: number
   revenueEstimate: number   // sum of monthlyRate for occupied beds
   plazaOccupied: number
+  peepalOccupied: number
   plazaTotal: number
+  peepalTotal: number
   depositsDue: number       // plaza beds with depositPaid=false
   depositsPaid: number
 }
@@ -44,19 +46,21 @@ function computeStats(rooms: Room[], scope: string): LiveStats {
   const filtered = scope === "all" ? rooms : rooms.filter(r => r.property === scope)
   let totalBeds = 0, occupied = 0, vacant = 0, incoming = 0, blocked = 0, special = 0
   let revenueEstimate = 0, depositsDue = 0, depositsPaid = 0
-  let plazaOccupied = 0, plazaTotal = 0
+  let plazaOccupied = 0, peepalOccupied = 0, plazaTotal = 0, peepalTotal = 0
   let residencyOccupied = 0
 
   for (const room of filtered) {
     for (const bed of room.beds) {
       totalBeds++
-      plazaTotal++
+      if (room.property === "safina-plaza") plazaTotal++
+      else peepalTotal++
 
       switch (bed.status) {
         case "occupied":
           occupied++
           revenueEstimate += room.monthlyRate
-          plazaOccupied++
+          if (room.property === "safina-plaza") plazaOccupied++
+          else peepalOccupied++
           if (streamFromTags(bed.tags) === "residency") residencyOccupied++
           if (bed.depositPaid === false) depositsDue++
           if (bed.depositPaid === true)  depositsPaid++
@@ -70,7 +74,7 @@ function computeStats(rooms: Room[], scope: string): LiveStats {
   }
 
   const occupancyRate = totalBeds > 0 ? Math.round((occupied / totalBeds) * 100) : 0
-  return { totalBeds, occupied, vacant, incoming, blocked, special, occupancyRate, residencyOccupied, coLivingOccupied: occupied - residencyOccupied, revenueEstimate, plazaOccupied, plazaTotal, depositsDue, depositsPaid }
+  return { totalBeds, occupied, vacant, incoming, blocked, special, occupancyRate, residencyOccupied, coLivingOccupied: occupied - residencyOccupied, revenueEstimate, plazaOccupied, peepalOccupied, plazaTotal, peepalTotal, depositsDue, depositsPaid }
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────
@@ -113,7 +117,7 @@ const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: 
   )
 }
 
-const CHART_COLORS = { safina: "#334155", occupancy: "#334155", grid: "#f1f5f9", tick: "#94a3b8" }
+const CHART_COLORS = { safina: "#334155", peepal: "#94a3b8", occupancy: "#334155", grid: "#f1f5f9", tick: "#94a3b8" }
 
 // ─── Page ─────────────────────────────────────────────────────────────────
 
@@ -140,7 +144,7 @@ export default function DashboardPage() {
   const stats = computeStats(rooms, scope)
   const scopedPending = scope === "all" ? pending : pending.filter(b => b.property === scope)
 
-  const scopeLabel = "Safina Plaza"
+  const scopeLabel = scope === "safina-plaza" ? "Safina Plaza" : scope === "peepal-tree" ? "Peepal Tree" : "Both properties"
 
   return (
     <div className="space-y-5">
@@ -205,6 +209,7 @@ export default function DashboardPage() {
                 <Tooltip content={<ChartTooltip />} />
                 <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px", color: "#64748b" }} />
                 <Bar dataKey="safina" name="Safina Plaza" fill={CHART_COLORS.safina} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="peepal" name="Peepal Tree"  fill={CHART_COLORS.peepal} radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -269,8 +274,9 @@ export default function DashboardPage() {
               </div>
             ))}
             {!loading && (
-              <div className="pt-1 border-t border-border text-[11px] text-muted-foreground">
+              <div className="pt-1 border-t border-border grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
                 <div>Plaza: <span className="font-medium text-foreground">{stats.plazaOccupied}/{stats.plazaTotal}</span></div>
+                <div>Peepal: <span className="font-medium text-foreground">{stats.peepalOccupied}/{stats.peepalTotal}</span></div>
               </div>
             )}
           </CardContent>
@@ -294,7 +300,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs font-medium text-foreground">{b.guestName}</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    Rm {b.room} · {b.property === "safina-plaza" ? "Plaza" : "Unknown"}
+                    Rm {b.room} · {b.property === "safina-plaza" ? "Plaza" : b.property === "peepal-tree" ? "Peepal" : "Unknown"}
                   </p>
                 </div>
                 <Badge variant="outline" className="text-[9px] h-4 px-1.5 shrink-0 bg-amber-50 text-amber-700 border-amber-200">

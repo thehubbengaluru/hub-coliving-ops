@@ -2,12 +2,25 @@ import Razorpay from "razorpay"
 import crypto from "crypto"
 import type { Property } from "./types"
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function getClient(_property: Property) {
+function getClient(property: Property) {
+  const isPlaza = property === "safina-plaza"
   return new Razorpay({
-    key_id:     process.env.RZP_KEY_ID_PLAZA!,
-    key_secret: process.env.RZP_KEY_SECRET_PLAZA!,
+    key_id:     isPlaza ? process.env.RZP_KEY_ID_PLAZA!     : process.env.RZP_KEY_ID_PEEPAL!,
+    key_secret: isPlaza ? process.env.RZP_KEY_SECRET_PLAZA! : process.env.RZP_KEY_SECRET_PEEPAL!,
   })
+}
+
+/**
+ * True when this property has Razorpay credentials configured. Mirrors
+ * zohoEnabled(). Callers MUST check this before starting a booking: without it
+ * the client is built with undefined keys and only fails deep inside the flow,
+ * after the guest has filled the form and a booking record may already exist.
+ */
+export function razorpayEnabled(property: Property): boolean {
+  const isPlaza = property === "safina-plaza"
+  const id     = isPlaza ? process.env.RZP_KEY_ID_PLAZA     : process.env.RZP_KEY_ID_PEEPAL
+  const secret = isPlaza ? process.env.RZP_KEY_SECRET_PLAZA : process.env.RZP_KEY_SECRET_PEEPAL
+  return !!(id && secret)
 }
 
 export interface RazorpayLink {
@@ -47,7 +60,7 @@ export async function createDepositLink({
   expireByUnix?: number // unix seconds — link expires and the booking is void (Razorpay minimum: 15 min out)
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
-  const propertyLabel = "Safina Plaza"
+  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const link = await (rzp.paymentLink as any).create({
@@ -84,7 +97,7 @@ export async function createRentPaymentLink({
   rentMonth?: string
 }): Promise<RazorpayLink> {
   const rzp = getClient(property)
-  const propertyLabel = "Safina Plaza"
+  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const link = await (rzp.paymentLink as any).create({
     amount: Math.round(amount * 100),
@@ -249,7 +262,7 @@ export async function createRentSubscription({
   zohoInvoiceId?: string
 }): Promise<RazorpaySubscription> {
   const rzp = getClient(property)
-  const propertyLabel = "Safina Plaza"
+  const propertyLabel = property === "safina-plaza" ? "Safina Plaza" : "Peepal Tree"
 
   // Auto-debit anchors on the 2nd-last day of the month BEFORE the rent month:
   // 2 days of buffer ahead of the 1st plus the 3-day grace window gives
@@ -357,14 +370,12 @@ export function getRzpInstance(property: Property) {
   return getClient(property)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function getPublicKey(_property: Property): string {
-  return process.env.RZP_KEY_ID_PLAZA!
+export function getPublicKey(property: Property): string {
+  return property === "safina-plaza" ? process.env.RZP_KEY_ID_PLAZA! : process.env.RZP_KEY_ID_PEEPAL!
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function verifyPaymentSignature(orderId: string, paymentId: string, signature: string, _property: Property): boolean {
-  const secret = process.env.RZP_KEY_SECRET_PLAZA!
+export function verifyPaymentSignature(orderId: string, paymentId: string, signature: string, property: Property): boolean {
+  const secret = property === "safina-plaza" ? process.env.RZP_KEY_SECRET_PLAZA! : process.env.RZP_KEY_SECRET_PEEPAL!
   const expected = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex")
   return expected === signature
 }

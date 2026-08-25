@@ -20,7 +20,7 @@ type ActiveGuest = {
   name: string
   status: "occupied" | "incoming" | "special"
   room: string
-  property: "safina-plaza"
+  property: "safina-plaza" | "peepal-tree"
   type: "private" | "sharing"
   checkIn: string
   checkOut?: string
@@ -200,10 +200,13 @@ function PendingBookingCard({
     }
   }, [booking.notionPageId, onActivated])
 
-  const propertyLabel = booking.property === "safina-plaza" ? "Safina Plaza" : "Unknown property"
+  const propertyLabel = booking.property === "safina-plaza" ? "Safina Plaza"
+    : booking.property === "peepal-tree" ? "Peepal Tree" : "Unknown property"
 
   const propertyColor = booking.property === "safina-plaza"
     ? "bg-violet-50 text-violet-700 border-violet-200"
+    : booking.property === "peepal-tree"
+    ? "bg-amber-50 text-amber-700 border-amber-200"
     : "bg-slate-50 text-slate-600 border-slate-200"
 
   return (
